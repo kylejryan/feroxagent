@@ -126,14 +126,6 @@ Load reconnaissance data from a file instead of stdin:
 feroxagent -u https://target.com --recon-file urls.txt
 ```
 
-### Enable HTTP Probing
-
-Gather additional context from server headers:
-
-```bash
-katana -u https://target.com -silent | feroxagent -u https://target.com --probe
-```
-
 ## Command Line Options
 
 ### feroxagent-specific Options
@@ -141,7 +133,6 @@ katana -u https://target.com -silent | feroxagent -u https://target.com --probe
 | Flag | Description |
 |------|-------------|
 | `--recon-file <FILE>` | Path to file containing reconnaissance URLs (alternative to stdin) |
-| `--probe` | Enable HTTP probing to gather server headers for additional context |
 | `--wordlist-only` | Output generated wordlist to stdout and exit (don't scan) |
 
 ### Inherited feroxbuster Options
@@ -177,14 +168,39 @@ feroxagent --help
    - Static file structures
    - Route conventions
 
-3. **Optional Probing**: With `--probe`, makes HEAD requests to gather:
+3. **HTTP Probing**: Automatically makes HEAD requests to gather:
    - Server headers
    - X-Powered-By information
    - Content types
 
-4. **Generate Wordlist**: Sends analysis to Claude API with a specialized prompt for security-focused wordlist generation
+4. **Attack Surface Report**: Generates an actionable report highlighting:
+   - High-value endpoints to target
+   - Potential vulnerabilities based on detected stack
+   - Recommended attack vectors (prioritized)
 
-5. **Scan Target**: Uses the generated wordlist to perform content discovery (or outputs the wordlist with `--wordlist-only`)
+5. **Generate Wordlist**: Creates a targeted wordlist based on the detected tech stack
+
+6. **Scan Target**: Uses the generated wordlist to perform content discovery (or outputs the wordlist with `--wordlist-only`)
+
+## Example Output
+
+```
+## Attack Surface Report
+
+### Detected Stack
+- Next.js 13 detected - check /_next/data/ for SSR data leaks
+- GraphQL endpoint at /graphql - test for introspection
+
+### High-Value Endpoints
+- /api/v1/users - REST API, test for IDOR
+- /api/admin - potential admin access
+- /graphql - check introspection, batching attacks
+
+### Recommended Attack Vectors
+1. Test GraphQL introspection at /graphql
+2. Enumerate /api/v1/ endpoints for IDOR
+3. Check /_next/data/ for sensitive SSR payloads
+```
 
 ## Example Workflow
 
@@ -194,7 +210,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Step 2: Run reconnaissance and scan
 katana -u https://example.com -silent -d 3 | \
-  feroxagent -u https://example.com --probe -x php,js,html -o results.txt
+  feroxagent -u https://example.com -x php,js,html -o results.txt
 
 # Or generate wordlist for use with other tools
 katana -u https://example.com -silent | \

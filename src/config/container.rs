@@ -97,10 +97,6 @@ pub struct Configuration {
     #[serde(default)]
     pub recon_file: String,
 
-    /// Whether to probe URLs for more context before generating wordlist
-    #[serde(default)]
-    pub probe: bool,
-
     /// Whether to output wordlist only (no scanning)
     #[serde(default)]
     pub wordlist_only: bool,
@@ -481,7 +477,6 @@ impl Default for Configuration {
             depth: depth(),
             threads: threads(),
             recon_file: String::new(),
-            probe: false,
             wordlist_only: false,
             anthropic_key: std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
             generated_wordlist: Vec::new(),
@@ -1095,10 +1090,6 @@ impl Configuration {
             config.update_app = true;
         }
 
-        if came_from_cli!(args, "probe") {
-            config.probe = true;
-        }
-
         if came_from_cli!(args, "wordlist_only") {
             config.wordlist_only = true;
         }
@@ -1445,7 +1436,6 @@ impl Configuration {
         update_if_not_default!(&mut conf.threads, new.threads, threads());
         update_if_not_default!(&mut conf.depth, new.depth, depth());
         update_if_not_default!(&mut conf.recon_file, new.recon_file, "");
-        update_if_not_default!(&mut conf.probe, new.probe, false);
         update_if_not_default!(&mut conf.wordlist_only, new.wordlist_only, false);
         update_if_not_default!(&mut conf.status_codes, new.status_codes, status_codes());
         // status_codes() is the default for replay_codes, if they're not provided

@@ -100,7 +100,6 @@ _feroxbuster() {
 '-e[Extract links from response body (html, javascript, etc...); make new requests based on findings (default\: true)]' \
 '--extract-links[Extract links from response body (html, javascript, etc...); make new requests based on findings (default\: true)]' \
 '--dont-extract-links[Don'\''t extract links from response body (html, javascript, etc...)]' \
-'--probe[Make HTTP requests to gather more context before generating wordlist]' \
 '--wordlist-only[Output generated wordlist to stdout without scanning]' \
 '(--auto-bail)--auto-tune[Automatically lower scan rate when an excessive amount of errors are encountered]' \
 '--auto-bail[Automatically stop scanning when an excessive amount of errors are encountered]' \

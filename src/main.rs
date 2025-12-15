@@ -30,8 +30,8 @@ use feroxagent::{
     filters, heuristics, logger,
     progress::PROGRESS_PRINTER,
     scan_manager::{self, ScanType},
-    scanner,
-    smart_wordlist::{self, output_wordlist, GeneratorConfig},
+    scanner::{self, RESPONSES},
+    smart_wordlist::{self, output_wordlist, DiscoveredEndpoint, GeneratorConfig, PentestReport},
     utils::{fmt_err, slugify_filename},
 };
 #[cfg(not(target_os = "windows"))]
@@ -184,13 +184,12 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
         PROGRESS_PRINTER.println("");
     });
 
-    // Generate smart wordlist using LLM
-    eprintln!("[*] Generating smart wordlist from recon data...");
+    // Generate smart wordlist and attack report using LLM
+    eprintln!("[*] Generating smart wordlist and attack surface report...");
 
     let generator_config = GeneratorConfig {
         target_url: config.target_url.clone(),
         anthropic_key: config.anthropic_key.clone(),
-        probe_enabled: config.probe,
         recon_file: if config.recon_file.is_empty() {
             None
         } else {
@@ -198,22 +197,35 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
         },
     };
 
-    let wordlist_result = smart_wordlist::generate_wordlist(generator_config, &config.client).await;
+    let generation_result =
+        smart_wordlist::generate_wordlist(generator_config, &config.client).await;
 
-    let generated_words = match wordlist_result {
-        Ok(words) => words,
+    let result = match generation_result {
+        Ok(r) => r,
         Err(e) => {
             bail!("Failed to generate wordlist: {}", e);
         }
     };
 
-    eprintln!("[+] Generated {} paths for scanning", generated_words.len());
+    // Initialize the pentest report
+    let mut pentest_report = PentestReport::new(config.target_url.clone());
+    pentest_report.set_recon_urls(result.recon_urls.clone());
+    pentest_report.set_technologies(result.technologies.clone());
+    pentest_report.set_attack_surface(result.attack_report.clone());
+    pentest_report.stats.total_paths_tested = result.wordlist.len();
+
+    eprintln!(
+        "\n[+] Generated {} paths for scanning",
+        result.wordlist.len()
+    );
 
     // Handle --wordlist-only mode
     if config.wordlist_only {
-        output_wordlist(&generated_words);
+        output_wordlist(&result.wordlist);
         exit(0);
     }
+
+    let generated_words = result.wordlist;
 
     if generated_words.is_empty() {
         bail!(
@@ -505,6 +517,37 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
     }
 
     clean_up(handles, tasks).await?;
+
+    // Generate comprehensive pentest report from scan results
+    if let Ok(responses) = RESPONSES.responses.read() {
+        for response in responses.iter() {
+            let url = response.url().to_string();
+            let status_code = response.status().as_u16();
+            let content_length = response.content_length();
+            let content_type = response
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
+            let (interesting, notes) =
+                PentestReport::is_interesting(&url, status_code, content_type.as_deref());
+
+            let endpoint = DiscoveredEndpoint {
+                url,
+                status_code,
+                content_length,
+                content_type,
+                interesting,
+                notes,
+            };
+
+            pentest_report.add_endpoint(endpoint);
+        }
+    }
+
+    // Output the comprehensive report
+    eprintln!("{}", pentest_report.generate_output());
 
     log::trace!("exit: wrapped_main");
     Ok(())

@@ -483,7 +483,6 @@ fn feroxstates_feroxserialize_implementation() {
         r#""config""#,
         r#""type":"configuration""#,
         r#""recon_file":"""#,
-        r#""probe":false"#,
         r#""wordlist_only":false"#,
         r#""anthropic_key":"""#,
         r#""config""#,

@@ -14,15 +14,22 @@ use std::io::{self, BufRead};
 pub struct GeneratorConfig {
     pub target_url: String,
     pub anthropic_key: String,
-    pub probe_enabled: bool,
     pub recon_file: Option<String>,
 }
 
-/// Generate a smart wordlist from recon data
+/// Result of the generation process including wordlist and attack surface report
+pub struct GenerationResult {
+    pub wordlist: Vec<String>,
+    pub attack_report: String,
+    pub recon_urls: Vec<String>,
+    pub technologies: Vec<String>,
+}
+
+/// Generate a smart wordlist and attack surface report from recon data
 pub async fn generate_wordlist(
     config: GeneratorConfig,
     http_client: &Client,
-) -> Result<Vec<String>> {
+) -> Result<GenerationResult> {
     // Read recon URLs
     let recon_urls = read_recon_urls(&config.recon_file)?;
 
@@ -43,14 +50,10 @@ pub async fn generate_wordlist(
         );
     }
 
-    // Optional: Probe URLs for more context
-    let probe_summary = if config.probe_enabled {
-        log::info!("Probing URLs for additional context...");
-        let probe_results = probe_urls(&recon_urls, http_client, 20).await?;
-        summarize_probe_results(&probe_results)
-    } else {
-        String::new()
-    };
+    // Always probe URLs for context (enabled by default now)
+    log::info!("Probing URLs for additional context...");
+    let probe_results = probe_urls(&recon_urls, http_client, 20).await?;
+    let probe_summary = summarize_probe_results(&probe_results);
 
     // Build the full analysis summary for LLM
     let mut full_summary = analysis.summary();
@@ -59,9 +62,17 @@ pub async fn generate_wordlist(
         full_summary.push_str(&probe_summary);
     }
 
-    // Generate wordlist using LLM
-    log::info!("Generating wordlist using Claude API...");
+    // Generate wordlist and attack report using LLM
+    log::info!("Generating wordlist and attack surface report using Claude API...");
     let claude = ClaudeClient::new(config.anthropic_key)?;
+
+    // Generate attack surface report
+    let attack_report = claude
+        .generate_attack_report(&full_summary, &config.target_url, &analysis, &probe_results)
+        .await
+        .context("Failed to generate attack surface report")?;
+
+    // Generate wordlist
     let llm_wordlist = claude
         .generate_wordlist(&full_summary, &config.target_url)
         .await
@@ -77,7 +88,19 @@ pub async fn generate_wordlist(
         combined_wordlist.len()
     );
 
-    Ok(combined_wordlist)
+    // Extract technology names for the report
+    let technologies: Vec<String> = analysis
+        .technologies
+        .iter()
+        .map(|(tech, confidence)| format!("{} ({:.0}%)", tech.as_str(), confidence * 100.0))
+        .collect();
+
+    Ok(GenerationResult {
+        wordlist: combined_wordlist,
+        attack_report,
+        recon_urls,
+        technologies,
+    })
 }
 
 /// Read recon URLs from file or stdin
@@ -169,6 +192,11 @@ pub fn output_wordlist(wordlist: &[String]) {
     for path in wordlist {
         println!("{}", path);
     }
+}
+
+/// Output attack surface report to stderr
+pub fn output_attack_report(report: &str) {
+    eprintln!("\n{}", report);
 }
 
 #[cfg(test)]

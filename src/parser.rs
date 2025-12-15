@@ -577,13 +577,6 @@ pub fn initialize() -> Command {
                 .num_args(1),
         )
         .arg(
-            Arg::new("probe")
-                .long("probe")
-                .num_args(0)
-                .help_heading("Smart wordlist settings")
-                .help("Make HTTP requests to gather more context before generating wordlist"),
-        )
-        .arg(
             Arg::new("wordlist_only")
                 .long("wordlist-only")
                 .num_args(0)
@@ -794,9 +787,6 @@ const EPILOGUE: &str = r#"NOTE:
 EXAMPLES:
     Basic usage with recon data from katana:
         katana -u http://127.1 | ./feroxagent -u http://127.1
-
-    With HTTP probing for more context:
-        katana -u http://127.1 | ./feroxagent -u http://127.1 --probe
 
     Output wordlist only (don't scan):
         katana -u http://127.1 | ./feroxagent -u http://127.1 --wordlist-only > custom.txt

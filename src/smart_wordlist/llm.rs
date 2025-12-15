@@ -3,6 +3,8 @@
 //! This module handles communication with the Anthropic Claude API
 //! to generate intelligent wordlists based on technology analysis.
 
+use super::analyzer::TechAnalysis;
+use super::probe::ProbeResult;
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -109,6 +111,143 @@ impl ClaudeClient {
         let wordlist = self.parse_wordlist_response(&text);
 
         Ok(wordlist)
+    }
+
+    /// Generate an attack surface report based on analysis and probe results
+    pub async fn generate_attack_report(
+        &self,
+        analysis_summary: &str,
+        target_url: &str,
+        analysis: &TechAnalysis,
+        probe_results: &[ProbeResult],
+    ) -> Result<String> {
+        let system_prompt = self.build_attack_report_system_prompt();
+        let user_prompt = self.build_attack_report_user_prompt(
+            analysis_summary,
+            target_url,
+            analysis,
+            probe_results,
+        );
+
+        let request = ClaudeRequest {
+            model: CLAUDE_MODEL.to_string(),
+            max_tokens: 4096,
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: user_prompt,
+            }],
+            system: system_prompt,
+        };
+
+        let response = self
+            .client
+            .post(CLAUDE_API_URL)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("content-type", "application/json")
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send request to Claude API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow!("Claude API error ({}): {}", status, error_text));
+        }
+
+        let claude_response: ClaudeResponse = response
+            .json()
+            .await
+            .context("Failed to parse Claude API response")?;
+
+        let report = claude_response
+            .content
+            .first()
+            .map(|c| c.text.clone())
+            .unwrap_or_default();
+
+        Ok(report)
+    }
+
+    fn build_attack_report_system_prompt(&self) -> String {
+        r#"You are an expert penetration tester analyzing reconnaissance data to identify attack vectors. Your job is to provide a concise, actionable attack surface report.
+
+IMPORTANT GUIDELINES:
+1. Be CONCISE - only include findings that are actionable
+2. If there's nothing notable or no obvious vulnerabilities, just output "No notable findings." and nothing else
+3. Focus on HIGH-VALUE targets: auth bypasses, sensitive data exposure, misconfigurations
+4. Each finding should include WHY it matters and HOW to exploit it
+5. Prioritize by impact: Critical > High > Medium
+6. Don't pad the report - only include genuinely useful intel
+
+OUTPUT FORMAT (only include sections with actual findings):
+
+## Attack Surface Report
+
+### Detected Stack
+[Only list if it reveals attack vectors, e.g., "Next.js 13 - check for RSC data leaks"]
+
+### High-Value Endpoints
+[List endpoints worth investigating with brief attack notes]
+
+### Potential Vulnerabilities
+[Only if you spot something concrete based on the data]
+
+### Recommended Attack Vectors
+[Prioritized list of what to try first]
+
+If the recon data is minimal or reveals nothing interesting, just say "No notable findings." - don't fabricate issues."#.to_string()
+    }
+
+    fn build_attack_report_user_prompt(
+        &self,
+        analysis_summary: &str,
+        target_url: &str,
+        analysis: &TechAnalysis,
+        probe_results: &[ProbeResult],
+    ) -> String {
+        // Build structured data about what we found
+        let mut endpoints_info = String::new();
+        if !analysis.api_endpoints.is_empty() {
+            endpoints_info.push_str("API Endpoints Found:\n");
+            for endpoint in &analysis.api_endpoints {
+                endpoints_info.push_str(&format!("  - {}\n", endpoint));
+            }
+        }
+
+        let mut probe_info = String::new();
+        if !probe_results.is_empty() {
+            probe_info.push_str("Probe Results:\n");
+            for result in probe_results.iter().take(20) {
+                probe_info.push_str(&format!("  {} -> {}\n", result.url, result.status_code));
+                if let Some(ref server) = result.server {
+                    probe_info.push_str(&format!("    Server: {}\n", server));
+                }
+                if let Some(ref powered_by) = result.powered_by {
+                    probe_info.push_str(&format!("    X-Powered-By: {}\n", powered_by));
+                }
+            }
+        }
+
+        format!(
+            r#"Target: {}
+
+RECONNAISSANCE SUMMARY:
+{}
+
+{}
+
+{}
+
+Based on this data, provide an attack surface report. Remember:
+- Only include actionable findings
+- If nothing stands out, say "No notable findings."
+- Focus on what a pentester should try FIRST
+- Include specific endpoints to target
+- Note any version info that suggests known vulnerabilities"#,
+            target_url, analysis_summary, endpoints_info, probe_info
+        )
     }
 
     fn build_system_prompt(&self) -> String {

@@ -8,8 +8,12 @@ mod analyzer;
 mod generator;
 mod llm;
 mod probe;
+mod report;
 
 pub use analyzer::TechAnalysis;
-pub use generator::{generate_wordlist, output_wordlist, GeneratorConfig};
+pub use generator::{
+    generate_wordlist, output_attack_report, output_wordlist, GenerationResult, GeneratorConfig,
+};
 pub use llm::ClaudeClient;
-pub use probe::probe_urls;
+pub use probe::{probe_urls, ProbeResult};
+pub use report::{output_report, DiscoveredEndpoint, PentestReport, ReportStats};
