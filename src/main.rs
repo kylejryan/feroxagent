@@ -530,8 +530,13 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
 
-            let (interesting, notes) =
+            let (interesting, pentest_score, notes) =
                 PentestReport::is_interesting(&url, status_code, content_type.as_deref());
+
+            // Track filtered noise (static assets with negative scores)
+            if pentest_score < 0 {
+                pentest_report.stats.total_filtered_noise += 1;
+            }
 
             let endpoint = DiscoveredEndpoint {
                 url,
@@ -539,6 +544,7 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
                 content_length,
                 content_type,
                 interesting,
+                pentest_score,
                 notes,
             };
 
