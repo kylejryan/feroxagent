@@ -17,6 +17,37 @@
 
 ---
 
+## Installation
+
+### Homebrew (macOS/Linux)
+
+```bash
+brew tap kylejryan/tap
+brew install feroxagent
+```
+
+### Download Binary
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/kylejryan/feroxagent/releases):
+
+| Platform | Download |
+|----------|----------|
+| macOS (Apple Silicon) | `aarch64-macos-feroxagent.tar.gz` |
+| macOS (Intel) | `x86_64-macos-feroxagent.tar.gz` |
+| Linux (x86_64) | `x86_64-linux-feroxagent.tar.gz` |
+| Linux (ARM64) | `aarch64-linux-feroxagent.tar.gz` |
+| Windows (x86_64) | `x86_64-windows-feroxagent.zip` |
+
+### Build from Source
+
+```bash
+git clone https://github.com/kylejryan/feroxagent.git
+cd feroxagent
+cargo build --release
+```
+
+---
+
 ## What is feroxagent?
 
 `feroxagent` is an AI-enhanced web content discovery tool built on top of feroxbuster. Instead of using static wordlists, it analyzes reconnaissance data from tools like [katana](https://github.com/projectdiscovery/katana), [gospider](https://github.com/jaeles-project/gospider), or [hakrawler](https://github.com/hakluke/hakrawler) and uses Claude AI to generate targeted wordlists based on detected technologies and URL patterns.
@@ -32,15 +63,10 @@
 
 ### Prerequisites
 
-1. **Anthropic API Key**: Export your API key as an environment variable:
-   ```bash
-   export ANTHROPIC_API_KEY="your-api-key-here"
-   ```
-
-2. **Build from source**:
-   ```bash
-   cargo build --release
-   ```
+**Anthropic API Key**: Export your API key as an environment variable:
+```bash
+export ANTHROPIC_API_KEY="your-api-key-here"
+```
 
 ### Basic Usage
 
@@ -48,13 +74,13 @@ Pipe reconnaissance data from your favorite crawler:
 
 ```bash
 # Using katana
-katana -u https://target.com -silent | ./target/release/feroxagent -u https://target.com
+katana -u https://target.com -silent | feroxagent -u https://target.com
 
 # Using gospider
-gospider -s https://target.com -q | ./target/release/feroxagent -u https://target.com
+gospider -s https://target.com -q | feroxagent -u https://target.com
 
 # Using hakrawler
-echo "https://target.com" | hakrawler -plain | ./target/release/feroxagent -u https://target.com
+echo "https://target.com" | hakrawler -plain | feroxagent -u https://target.com
 ```
 
 ### Output Wordlist Only
@@ -62,7 +88,7 @@ echo "https://target.com" | hakrawler -plain | ./target/release/feroxagent -u ht
 Generate a wordlist without scanning:
 
 ```bash
-katana -u https://target.com -silent | ./target/release/feroxagent -u https://target.com --wordlist-only
+katana -u https://target.com -silent | feroxagent -u https://target.com --wordlist-only
 ```
 
 ### Use a Recon File
@@ -70,7 +96,7 @@ katana -u https://target.com -silent | ./target/release/feroxagent -u https://ta
 Load reconnaissance data from a file instead of stdin:
 
 ```bash
-./target/release/feroxagent -u https://target.com --recon-file urls.txt
+feroxagent -u https://target.com --recon-file urls.txt
 ```
 
 ### Enable HTTP Probing
@@ -78,7 +104,7 @@ Load reconnaissance data from a file instead of stdin:
 Gather additional context from server headers:
 
 ```bash
-katana -u https://target.com -silent | ./target/release/feroxagent -u https://target.com --probe
+katana -u https://target.com -silent | feroxagent -u https://target.com --probe
 ```
 
 ## Command Line Options
@@ -111,7 +137,7 @@ feroxagent inherits most of feroxbuster's powerful options:
 
 For the complete list of options, run:
 ```bash
-./target/release/feroxagent --help
+feroxagent --help
 ```
 
 ## How It Works
@@ -141,11 +167,11 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 
 # Step 2: Run reconnaissance and scan
 katana -u https://example.com -silent -d 3 | \
-  ./target/release/feroxagent -u https://example.com --probe -x php,js,html -o results.txt
+  feroxagent -u https://example.com --probe -x php,js,html -o results.txt
 
 # Or generate wordlist for use with other tools
 katana -u https://example.com -silent | \
-  ./target/release/feroxagent -u https://example.com --wordlist-only > custom-wordlist.txt
+  feroxagent -u https://example.com --wordlist-only > custom-wordlist.txt
 ```
 
 ## Technology Detection

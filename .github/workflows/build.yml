@@ -15,26 +15,26 @@ jobs:
           - type: ubuntu-x64
             os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            name: x86_64-linux-feroxbuster
-            path: target/x86_64-unknown-linux-musl/release/feroxbuster
+            name: x86_64-linux-feroxagent
+            path: target/x86_64-unknown-linux-musl/release/feroxagent
             pkg_config_path: /usr/lib/x86_64-linux-gnu/pkgconfig
           - type: ubuntu-x86
             os: ubuntu-latest
             target: i686-unknown-linux-musl
-            name: x86-linux-feroxbuster
-            path: target/i686-unknown-linux-musl/release/feroxbuster
+            name: x86-linux-feroxagent
+            path: target/i686-unknown-linux-musl/release/feroxagent
             pkg_config_path: /usr/lib/i686-linux-gnu/pkgconfig
           - type: armv7
             os: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
-            name: armv7-linux-feroxbuster
-            path: target/armv7-unknown-linux-gnueabihf/release/feroxbuster
+            name: armv7-linux-feroxagent
+            path: target/armv7-unknown-linux-gnueabihf/release/feroxagent
             pkg_config_path: /usr/lib/x86_64-linux-gnu/pkgconfig
           - type: aarch64
             os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            name: aarch64-linux-feroxbuster
-            path: target/aarch64-unknown-linux-gnu/release/feroxbuster
+            name: aarch64-linux-feroxagent
+            path: target/aarch64-unknown-linux-gnu/release/feroxagent
             pkg_config_path: /usr/lib/x86_64-linux-gnu/pkgconfig
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
       - name: Build tar.gz for homebrew installs
         if: matrix.type == 'ubuntu-x64'
         run: |
-          tar czf ${{ matrix.name }}.tar.gz -C target/x86_64-unknown-linux-musl/release feroxbuster
+          tar czf ${{ matrix.name }}.tar.gz -C target/x86_64-unknown-linux-musl/release feroxagent
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
@@ -87,8 +87,8 @@ jobs:
         run: cargo build --target=x86_64-unknown-linux-musl
       - uses: actions/upload-artifact@v4
         with:
-          name: x86_64-linux-debug-feroxbuster
-          path: target/x86_64-unknown-linux-musl/debug/feroxbuster
+          name: x86_64-linux-debug-feroxagent
+          path: target/x86_64-unknown-linux-musl/debug/feroxagent
 
   build-debug-windows:
     env:
@@ -107,31 +107,8 @@ jobs:
         run: cargo build --target=x86_64-pc-windows-msvc
       - uses: actions/upload-artifact@v4
         with:
-          name: x86_64-windows-debug-feroxbuster.exe
-          path: target\x86_64-pc-windows-msvc\debug\feroxbuster.exe
-
-  build-deb:
-    needs: [build-nix]
-    runs-on: ubuntu-latest
-    env:
-      IN_PIPELINE: true
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install cargo-deb
-        run: cargo install -f cargo-deb
-      - uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: musl-tools # provides musl-gcc
-          version: 1.0
-      - name: Install musl toolchain
-        run: rustup target add x86_64-unknown-linux-musl
-      - name: Deb Build
-        run: cargo deb --target=x86_64-unknown-linux-musl
-      - name: Upload Deb Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: feroxbuster_amd64.deb
-          path: ./target/x86_64-unknown-linux-musl/debian/*
+          name: x86_64-windows-debug-feroxagent.exe
+          path: target\x86_64-pc-windows-msvc\debug\feroxagent.exe
 
   build-macos:
     env:
@@ -152,16 +129,16 @@ jobs:
           toolchain: stable
       - name: Build tar.gz for homebrew installs
         run: |
-          tar czf x86_64-macos-feroxbuster.tar.gz -C target/x86_64-apple-darwin/release feroxbuster
+          tar czf x86_64-macos-feroxagent.tar.gz -C target/x86_64-apple-darwin/release feroxagent
       - uses: actions/upload-artifact@v4
         with:
-          name: x86_64-macos-feroxbuster
-          path: target/x86_64-apple-darwin/release/feroxbuster
+          name: x86_64-macos-feroxagent
+          path: target/x86_64-apple-darwin/release/feroxagent
       - uses: actions/upload-artifact@v4
         with:
-          name: x86_64-macos-feroxbuster.tar.gz
-          path: x86_64-macos-feroxbuster.tar.gz
-  
+          name: x86_64-macos-feroxagent.tar.gz
+          path: x86_64-macos-feroxagent.tar.gz
+
   build-macos-aarch64:
     env:
       IN_PIPELINE: true
@@ -181,15 +158,15 @@ jobs:
           toolchain: stable
       - name: Build tar.gz for homebrew installs
         run: |
-          tar czf aarch64-macos-feroxbuster.tar.gz -C target/aarch64-apple-darwin/release feroxbuster
+          tar czf aarch64-macos-feroxagent.tar.gz -C target/aarch64-apple-darwin/release feroxagent
       - uses: actions/upload-artifact@v4
         with:
-          name: aarch64-macos-feroxbuster
-          path: target/aarch64-apple-darwin/release/feroxbuster
+          name: aarch64-macos-feroxagent
+          path: target/aarch64-apple-darwin/release/feroxagent
       - uses: actions/upload-artifact@v4
         with:
-          name: aarch64-macos-feroxbuster.tar.gz
-          path: aarch64-macos-feroxbuster.tar.gz
+          name: aarch64-macos-feroxagent.tar.gz
+          path: aarch64-macos-feroxagent.tar.gz
 
   build-windows:
     env:
@@ -203,13 +180,13 @@ jobs:
           - type: windows-x64
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            name: x86_64-windows-feroxbuster.exe
-            path: target\x86_64-pc-windows-msvc\release\feroxbuster.exe
+            name: x86_64-windows-feroxagent.exe
+            path: target\x86_64-pc-windows-msvc\release\feroxagent.exe
           - type: windows-x86
             os: windows-latest
             target: i686-pc-windows-msvc
-            name: x86-windows-feroxbuster.exe
-            path: target\i686-pc-windows-msvc\release\feroxbuster.exe
+            name: x86-windows-feroxagent.exe
+            path: target\i686-pc-windows-msvc\release\feroxagent.exe
     steps:
       - uses: actions/checkout@v4
       - name: Cache cargo & target directories
