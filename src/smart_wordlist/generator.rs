@@ -19,7 +19,10 @@ pub struct GeneratorConfig {
 }
 
 /// Generate a smart wordlist from recon data
-pub async fn generate_wordlist(config: GeneratorConfig, http_client: &Client) -> Result<Vec<String>> {
+pub async fn generate_wordlist(
+    config: GeneratorConfig,
+    http_client: &Client,
+) -> Result<Vec<String>> {
     // Read recon URLs
     let recon_urls = read_recon_urls(&config.recon_file)?;
 
@@ -69,7 +72,10 @@ pub async fn generate_wordlist(config: GeneratorConfig, http_client: &Client) ->
     // Combine LLM wordlist with extracted paths
     let combined_wordlist = combine_wordlists(&analysis, llm_wordlist);
 
-    log::info!("Final wordlist contains {} unique paths", combined_wordlist.len());
+    log::info!(
+        "Final wordlist contains {} unique paths",
+        combined_wordlist.len()
+    );
 
     Ok(combined_wordlist)
 }
@@ -182,10 +188,7 @@ mod tests {
         analysis.paths.insert("/existing/path".to_string());
         analysis.api_endpoints.push("/api/users".to_string());
 
-        let llm_wordlist = vec![
-            "/api/admin".to_string(),
-            "/api/config".to_string(),
-        ];
+        let llm_wordlist = vec!["/api/admin".to_string(), "/api/config".to_string()];
 
         let combined = combine_wordlists(&analysis, llm_wordlist);
 

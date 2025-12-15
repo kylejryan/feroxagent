@@ -91,11 +91,7 @@ impl ClaudeClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            return Err(anyhow!(
-                "Claude API error ({}): {}",
-                status,
-                error_text
-            ));
+            return Err(anyhow!("Claude API error ({}): {}", status, error_text));
         }
 
         let claude_response: ClaudeResponse = response

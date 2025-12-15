@@ -31,7 +31,7 @@ use feroxagent::{
     progress::PROGRESS_PRINTER,
     scan_manager::{self, ScanType},
     scanner,
-    smart_wordlist::{self, GeneratorConfig, output_wordlist},
+    smart_wordlist::{self, output_wordlist, GeneratorConfig},
     utils::{fmt_err, slugify_filename},
 };
 #[cfg(not(target_os = "windows"))]
@@ -216,7 +216,9 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
     }
 
     if generated_words.is_empty() {
-        bail!("Generated wordlist is empty. Ensure recon data is provided via stdin or --recon-file");
+        bail!(
+            "Generated wordlist is empty. Ensure recon data is provided via stdin or --recon-file"
+        );
     }
 
     // Convert to the format expected by the scanner

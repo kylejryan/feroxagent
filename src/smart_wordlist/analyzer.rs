@@ -196,7 +196,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.contains("/_next/static")
         || path_lower.contains("node_modules/next/")
     {
-        *analysis.technologies.entry(Technology::NextJs).or_insert(0.0) += 0.3;
+        *analysis
+            .technologies
+            .entry(Technology::NextJs)
+            .or_insert(0.0) += 0.3;
         analysis.static_patterns.push("/_next/static/".to_string());
     }
 
@@ -205,7 +208,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.contains("react")
         || path_lower.contains("/bundle.js")
     {
-        *analysis.technologies.entry(Technology::React).or_insert(0.0) += 0.2;
+        *analysis
+            .technologies
+            .entry(Technology::React)
+            .or_insert(0.0) += 0.2;
     }
 
     // Vue.js detection
@@ -221,7 +227,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         && (path_lower.contains(".js") || path_lower.contains(".bundle"))
         || path_lower.contains("angular")
     {
-        *analysis.technologies.entry(Technology::Angular).or_insert(0.0) += 0.2;
+        *analysis
+            .technologies
+            .entry(Technology::Angular)
+            .or_insert(0.0) += 0.2;
     }
 
     // Rails detection
@@ -229,7 +238,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.contains("/packs/")
         || path_lower.contains("/rails/")
     {
-        *analysis.technologies.entry(Technology::Rails).or_insert(0.0) += 0.3;
+        *analysis
+            .technologies
+            .entry(Technology::Rails)
+            .or_insert(0.0) += 0.3;
     }
 
     // Django detection
@@ -237,7 +249,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.contains("/django")
         || path_lower.contains("/__debug__/")
     {
-        *analysis.technologies.entry(Technology::Django).or_insert(0.0) += 0.3;
+        *analysis
+            .technologies
+            .entry(Technology::Django)
+            .or_insert(0.0) += 0.3;
     }
 
     // Laravel detection
@@ -245,7 +260,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.contains("/vendor/")
         || path_lower.contains("/livewire/")
     {
-        *analysis.technologies.entry(Technology::Laravel).or_insert(0.0) += 0.3;
+        *analysis
+            .technologies
+            .entry(Technology::Laravel)
+            .or_insert(0.0) += 0.3;
     }
 
     // WordPress detection
@@ -253,12 +271,18 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.contains("/wp-admin/")
         || path_lower.contains("/wp-includes/")
     {
-        *analysis.technologies.entry(Technology::WordPress).or_insert(0.0) += 0.5;
+        *analysis
+            .technologies
+            .entry(Technology::WordPress)
+            .or_insert(0.0) += 0.5;
     }
 
     // GraphQL detection
     if path_lower.contains("/graphql") || path_lower.contains("/gql") {
-        *analysis.technologies.entry(Technology::GraphQL).or_insert(0.0) += 0.4;
+        *analysis
+            .technologies
+            .entry(Technology::GraphQL)
+            .or_insert(0.0) += 0.4;
         analysis.api_endpoints.push("/graphql".to_string());
     }
 
@@ -267,7 +291,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.starts_with("/v1/")
         || path_lower.starts_with("/v2/")
     {
-        *analysis.technologies.entry(Technology::RestApi).or_insert(0.0) += 0.2;
+        *analysis
+            .technologies
+            .entry(Technology::RestApi)
+            .or_insert(0.0) += 0.2;
     }
 
     // ASP.NET detection
@@ -275,7 +302,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.contains(".ashx")
         || path_lower.contains("/_vti_bin/")
     {
-        *analysis.technologies.entry(Technology::AspNet).or_insert(0.0) += 0.4;
+        *analysis
+            .technologies
+            .entry(Technology::AspNet)
+            .or_insert(0.0) += 0.4;
     }
 
     // Spring detection
@@ -283,7 +313,10 @@ fn detect_technologies(path: &str, analysis: &mut TechAnalysis) {
         || path_lower.contains("/swagger-ui")
         || path_lower.contains("/v2/api-docs")
     {
-        *analysis.technologies.entry(Technology::Spring).or_insert(0.0) += 0.4;
+        *analysis
+            .technologies
+            .entry(Technology::Spring)
+            .or_insert(0.0) += 0.4;
     }
 
     // Normalize confidence scores (cap at 1.0)

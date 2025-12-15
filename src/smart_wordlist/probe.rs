@@ -109,7 +109,12 @@ fn extract_url_pattern(url: &str) -> String {
             })
             .collect::<Vec<_>>()
             .join("/");
-        format!("{}://{}{}", parsed.scheme(), parsed.host_str().unwrap_or(""), pattern)
+        format!(
+            "{}://{}{}",
+            parsed.scheme(),
+            parsed.host_str().unwrap_or(""),
+            pattern
+        )
     } else {
         url.to_string()
     }
@@ -132,9 +137,7 @@ async fn probe_single_url(url: &str, client: &Client) -> Result<ProbeResult> {
     let content_type = headers.get("content-type").cloned();
     let server = headers.get("server").cloned();
     let powered_by = headers.get("x-powered-by").cloned();
-    let content_length = headers
-        .get("content-length")
-        .and_then(|v| v.parse().ok());
+    let content_length = headers.get("content-length").and_then(|v| v.parse().ok());
 
     Ok(ProbeResult {
         url: url.to_string(),
@@ -158,13 +161,14 @@ pub fn summarize_probe_results(results: &[ProbeResult]) -> String {
     summary.push_str("HTTP Probe Results:\n");
 
     // Server headers
-    let servers: Vec<_> = results
-        .iter()
-        .filter_map(|r| r.server.as_ref())
-        .collect();
+    let servers: Vec<_> = results.iter().filter_map(|r| r.server.as_ref()).collect();
     if !servers.is_empty() {
         summary.push_str("\nServer headers detected:\n");
-        let mut unique_servers: Vec<_> = servers.into_iter().collect::<std::collections::HashSet<_>>().into_iter().collect();
+        let mut unique_servers: Vec<_> = servers
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
         unique_servers.sort();
         for server in unique_servers {
             summary.push_str(&format!("  - {}\n", server));
@@ -178,7 +182,11 @@ pub fn summarize_probe_results(results: &[ProbeResult]) -> String {
         .collect();
     if !powered_by.is_empty() {
         summary.push_str("\nX-Powered-By headers:\n");
-        let mut unique: Vec<_> = powered_by.into_iter().collect::<std::collections::HashSet<_>>().into_iter().collect();
+        let mut unique: Vec<_> = powered_by
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
         unique.sort();
         for header in unique {
             summary.push_str(&format!("  - {}\n", header));
@@ -204,7 +212,11 @@ pub fn summarize_probe_results(results: &[ProbeResult]) -> String {
         .collect();
     if !content_types.is_empty() {
         summary.push_str("\nContent types:\n");
-        let mut unique: Vec<_> = content_types.into_iter().collect::<std::collections::HashSet<_>>().into_iter().collect();
+        let mut unique: Vec<_> = content_types
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
         unique.sort();
         for ct in unique.iter().take(10) {
             summary.push_str(&format!("  - {}\n", ct));
