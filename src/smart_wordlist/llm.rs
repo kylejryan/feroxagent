@@ -346,39 +346,61 @@ Focus on quality over quantity - each path should have a reasonable chance of ex
 RECONNAISSANCE DATA:
 {}
 
-Generate a targeted wordlist based on the above analysis. Your wordlist should:
+Generate a targeted wordlist based on the above analysis.
 
-1. FRAMEWORK-SPECIFIC PATHS: Generate paths specific to the detected technologies
-   - If Next.js: /_next/data/, /api/, /__nextjs_original-stack-frame
-   - If Rails: /rails/info, /rails/mailers, /sidekiq
-   - If Django: /admin/, /__debug__/, /static/admin/
-   - If Spring: /actuator/*, /swagger-ui.html, /v3/api-docs
-   - etc.
+CRITICAL - EXTRAPOLATE ONLY FROM DISCOVERED PATTERNS:
 
-2. PATTERN EXTRAPOLATION: Based on discovered routes, generate logical variations
-   - If /api/v1/users exists, try /api/v1/admin, /api/v2/users, /api/internal/users
-   - If /dashboard found, try /dashboard/admin, /dashboard/settings, /dashboard/debug
+IMPORTANT: Only generate CRUD variations (/new, /create, /edit, /delete, /search, etc.) for resources
+that ACTUALLY APPEAR in the reconnaissance data above. Do NOT speculatively generate CRUD variations
+for resources like /api/imports, /api/exports, /api/files unless they appear in the recon.
 
-3. SENSITIVE FILE DISCOVERY: Include paths for secrets, configs, and source code
-   - Version control: /.git/*, /.svn/*
-   - Environment: /.env*, /config/*, /secrets/*
-   - Backups: Append .bak, .old, .backup to discovered paths
+If you see API endpoints like /api/products or /api/users in the recon, generate:
+- /admin (always include admin panel)
+- /api/admin (admin API namespace)
+- /api/admin/users, /api/admin/diagnostics, /api/admin/settings
+- /api/auth/me, /api/auth/register, /api/auth/refresh, /api/auth/forgot-password
+- /api/[discovered_resource]/{{id}} patterns for resources IN THE RECON
+- /api/[discovered_resource]/{{id}}/[subresource] for resources IN THE RECON
 
-4. INFRASTRUCTURE EXPOSURE: Cloud metadata, health checks, metrics
-   - /actuator/*, /metrics, /healthz, /debug/pprof/*
+For ONLY the resources actually found in recon data (e.g., if /api/products exists, generate):
+- /api/products/{{id}}
+- /api/products/new, /api/products/create, /api/products/search
 
-5. AUTHENTICATION BYPASS: Auth-related endpoints that may leak info
-   - /oauth/, /.well-known/*, /api/auth/*, /token
+DO NOT generate CRUD variations for resources not in the recon (e.g., don't add /api/imports/create
+unless /api/imports was discovered).
 
-6. API INTROSPECTION: Documentation and schema endpoints
-   - /swagger*, /openapi*, /graphql, /graphiql, /api-docs
+Common related resources to try (base paths only, no CRUD suffixes):
+- /api/reviews, /api/comments, /api/orders, /api/users, /api/auth
 
-IMPORTANT:
-- Prioritize paths most likely to exist based on the detected stack
-- Include backup/alternate versions of discovered paths
-- Generate paths that could expose sensitive data or functionality
-- Each path should start with /
-- No explanations, just the wordlist
+ALWAYS INCLUDE (regardless of detected stack):
+- /admin
+- /admin/login
+- /admin/dashboard
+- /api/admin
+- /api/health
+- /api/status
+- /api/version
+- /api/config
+- /api/debug
+- /api/metrics
+- /.env
+- /.git/config
+- /swagger.json
+- /api-docs
+- /graphql
+
+FRAMEWORK-SPECIFIC (based on detected tech):
+- Next.js: /_next/data/, /api/, /__nextjs_original-stack-frame, /_next/image
+- Rails: /rails/info, /rails/mailers, /sidekiq, /admin
+- Django: /admin/, /__debug__/, /static/admin/
+- Spring: /actuator/*, /swagger-ui.html, /v3/api-docs
+
+OUTPUT RULES:
+- Each path on its own line, starting with /
+- Use {{id}} for parameterized segments (e.g., /api/products/{{id}})
+- No explanations, no markdown, no comments
+- Generate 150-300 paths
+- Quality over quantity but DO NOT skip common patterns
 
 Output the wordlist now:"#,
             target_url, analysis_summary
@@ -386,21 +408,34 @@ Output the wordlist now:"#,
     }
 
     fn parse_wordlist_response(&self, response: &str) -> Vec<String> {
-        response
-            .lines()
-            .map(|line| line.trim())
-            .filter(|line| !line.is_empty())
-            .filter(|line| line.starts_with('/'))
-            .map(|line| {
-                // Clean up any trailing comments or spaces
-                if let Some(idx) = line.find('#') {
-                    line[..idx].trim().to_string()
-                } else {
-                    line.to_string()
-                }
-            })
-            .filter(|line| !line.is_empty())
-            .collect()
+        let mut paths: Vec<String> = Vec::new();
+
+        for line in response.lines() {
+            let line = line.trim();
+            if line.is_empty() || !line.starts_with('/') {
+                continue;
+            }
+
+            // Clean up any trailing comments
+            let clean_line = if let Some(idx) = line.find('#') {
+                line[..idx].trim()
+            } else {
+                line
+            };
+
+            if clean_line.is_empty() {
+                continue;
+            }
+
+            // Keep parameterized paths as-is - they'll be expanded by the mutation engine
+            // This includes patterns like /api/products/{id} or /api/products/{{id}}
+            paths.push(clean_line.to_string());
+        }
+
+        // Deduplicate
+        paths.sort();
+        paths.dedup();
+        paths
     }
 }
 
@@ -422,11 +457,12 @@ mod tests {
 /debug
 /api/internal  # inline comment
 not-a-path
-/valid/path"#;
+/valid/path
+/api/products/{id}"#;
 
         let wordlist = client.parse_wordlist_response(response);
 
-        assert_eq!(wordlist.len(), 6);
+        assert_eq!(wordlist.len(), 7);
         assert!(wordlist.contains(&"/api/admin".to_string()));
         assert!(wordlist.contains(&"/api/users".to_string()));
         assert!(wordlist.contains(&"/api/v1/config".to_string()));
@@ -434,5 +470,7 @@ not-a-path
         assert!(wordlist.contains(&"/api/internal".to_string()));
         assert!(wordlist.contains(&"/valid/path".to_string()));
         assert!(!wordlist.contains(&"not-a-path".to_string()));
+        // Parameterized paths are now kept as-is for mutation engine to handle
+        assert!(wordlist.contains(&"/api/products/{id}".to_string()));
     }
 }

@@ -23,6 +23,10 @@ pub struct DiscoveredEndpoint {
     pub interesting: bool,
     pub pentest_score: i32,
     pub notes: Vec<String>,
+    /// If this endpoint appears to be parameterized (e.g., /api/products/123)
+    pub is_parameterized: bool,
+    /// The inferred parameter pattern (e.g., /api/products/{id})
+    pub param_pattern: Option<String>,
 }
 
 /// Comprehensive pentest report
@@ -302,18 +306,37 @@ impl PentestReport {
             .collect();
 
         if !attack_surface.is_empty() {
-            output.push_str(&format!(" 🎯  {}\n", style("Attack Surface").bright().white()));
+            output.push_str(&format!(
+                " 🎯  {}\n",
+                style("Attack Surface").bright().white()
+            ));
             output.push_str("───────────────────────────────────────────────────────────────────────────────────\n");
 
             for endpoint in &attack_surface {
                 // Color-code status by response type (matching feroxbuster's status_colorizer)
                 let colored_status = colorize_status_code(endpoint.status_code);
                 let size_str = format!("{}c", endpoint.content_length);
+
+                // Show parameterized pattern if detected
+                let url_display = if endpoint.is_parameterized {
+                    if let Some(ref pattern) = endpoint.param_pattern {
+                        format!(
+                            "{} {}",
+                            endpoint.url,
+                            style(format!("→ {}", pattern)).cyan()
+                        )
+                    } else {
+                        endpoint.url.clone()
+                    }
+                } else {
+                    endpoint.url.clone()
+                };
+
                 output.push_str(&format!(
                     "{:<7} {:>9} {}\n",
                     colored_status,
                     style(size_str).dim(),
-                    endpoint.url
+                    url_display
                 ));
             }
 
@@ -322,7 +345,10 @@ impl PentestReport {
 
         // Original recon URLs from katana/gospider/etc
         if !self.recon_urls.is_empty() {
-            output.push_str(&format!(" 📡  {}\n", style("Recon URLs (from katana/gospider)").bright().white()));
+            output.push_str(&format!(
+                " 📡  {}\n",
+                style("Recon URLs (from katana/gospider)").bright().white()
+            ));
             output.push_str("───────────────────────────────────────────────────────────────────────────────────\n");
 
             for url in &self.recon_urls {
@@ -411,23 +437,23 @@ fn accepts_user_input(url: &str, status_code: u16) -> bool {
 
     // Known input-accepting endpoints
     let input_patterns = [
-        "/_next/image",  // accepts url param - SSRF potential
-        "/graphql",      // accepts queries
-        "/api/",         // REST APIs accept input
-        "/search",       // search functionality
-        "/upload",       // file uploads
-        "/login",        // credentials
-        "/register",     // user data
-        "/reset",        // password reset
-        "/callback",     // OAuth callbacks
-        "/webhook",      // webhook endpoints
-        "/import",       // data import
-        "/export",       // may accept format params
-        "/proxy",        // proxy endpoints - SSRF
-        "/fetch",        // fetch endpoints - SSRF
-        "/redirect",     // redirect endpoints - open redirect
-        "/url",          // URL params - SSRF/redirect
-        "/link",         // link params
+        "/_next/image", // accepts url param - SSRF potential
+        "/graphql",     // accepts queries
+        "/api/",        // REST APIs accept input
+        "/search",      // search functionality
+        "/upload",      // file uploads
+        "/login",       // credentials
+        "/register",    // user data
+        "/reset",       // password reset
+        "/callback",    // OAuth callbacks
+        "/webhook",     // webhook endpoints
+        "/import",      // data import
+        "/export",      // may accept format params
+        "/proxy",       // proxy endpoints - SSRF
+        "/fetch",       // fetch endpoints - SSRF
+        "/redirect",    // redirect endpoints - open redirect
+        "/url",         // URL params - SSRF/redirect
+        "/link",        // link params
     ];
 
     input_patterns.iter().any(|p| url.contains(p))
@@ -584,7 +610,7 @@ fn is_dev_or_internal(url: &str) -> bool {
         "/trace",
         "/profiler",
         "/pprof",
-        "/silk/",  // Django Silk profiler
+        "/silk/", // Django Silk profiler
         "/phpinfo",
         "/info.php",
         "/test.php",
@@ -600,7 +626,7 @@ fn is_dev_or_internal(url: &str) -> bool {
         "/livez",
         "/metrics",
         "/prometheus",
-        "/-/",  // Prometheus/GitLab internal
+        "/-/", // Prometheus/GitLab internal
         // Admin/management
         "/admin",
         "/manage",
@@ -663,7 +689,9 @@ fn get_sensitive_path_reason(url: &str) -> Option<String> {
     if url.contains("/.env") {
         return Some("Environment file - likely contains secrets/credentials".to_string());
     }
-    if url.contains("/config") && (url.contains(".json") || url.contains(".yml") || url.contains(".yaml")) {
+    if url.contains("/config")
+        && (url.contains(".json") || url.contains(".yml") || url.contains(".yaml"))
+    {
         return Some("Config file - may contain credentials, API keys".to_string());
     }
     if url.contains("/.aws") || url.contains("/credentials") {
@@ -677,7 +705,8 @@ fn get_sensitive_path_reason(url: &str) -> Option<String> {
     }
 
     // Backups
-    if url.contains(".bak") || url.contains(".backup") || url.contains(".old") || url.contains("~") {
+    if url.contains(".bak") || url.contains(".backup") || url.contains(".old") || url.contains("~")
+    {
         return Some("Backup file - may contain sensitive data or source".to_string());
     }
     if url.contains(".sql") || url.contains(".dump") {
@@ -705,15 +734,125 @@ pub fn output_report(report: &PentestReport) {
     eprintln!("{}", report.generate_output());
 }
 
+// =============================================================================
+// PARAMETERIZED ENDPOINT DETECTION
+// =============================================================================
+
+/// Common ID values used in mutation testing that indicate parameterized endpoints
+const PARAM_ID_VALUES: &[&str] = &[
+    "1", "2", "0", "100", "999", "1000", "-1",
+    "admin", "test", "guest", "user", "root", "default",
+    "null", "undefined", "current", "me", "self",
+];
+
+/// UUID patterns
+const UUID_PATTERNS: &[&str] = &[
+    "00000000-0000-0000-0000-000000000000",
+    "00000000-0000-0000-0000-000000000001",
+    "ffffffff-ffff-ffff-ffff-ffffffffffff",
+];
+
+/// Detect if a URL segment looks like an ID parameter
+fn looks_like_id_segment(segment: &str) -> Option<&'static str> {
+    // Check for common test IDs
+    if PARAM_ID_VALUES.contains(&segment) {
+        return Some("{id}");
+    }
+
+    // Check for UUID patterns
+    if UUID_PATTERNS.contains(&segment) {
+        return Some("{uuid}");
+    }
+
+    // Check for numeric ID
+    if segment.parse::<i64>().is_ok() {
+        return Some("{id}");
+    }
+
+    // Check for UUID format (8-4-4-4-12)
+    if segment.len() == 36 && segment.chars().filter(|&c| c == '-').count() == 4 {
+        let parts: Vec<&str> = segment.split('-').collect();
+        if parts.len() == 5
+            && parts[0].len() == 8
+            && parts[1].len() == 4
+            && parts[2].len() == 4
+            && parts[3].len() == 4
+            && parts[4].len() == 12
+            && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_hexdigit()))
+        {
+            return Some("{uuid}");
+        }
+    }
+
+    // Check for MongoDB ObjectId (24 hex chars)
+    if segment.len() == 24 && segment.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Some("{objectId}");
+    }
+
+    // Check for hash-like strings (long alphanumeric)
+    if segment.len() > 16 && segment.chars().all(|c| c.is_alphanumeric()) {
+        return Some("{hash}");
+    }
+
+    None
+}
+
+/// Detect if a URL is parameterized and return the pattern
+pub fn detect_parameterized_endpoint(url: &str) -> (bool, Option<String>) {
+    // Parse the path from the URL
+    let path = if let Some(idx) = url.find("://") {
+        let after_scheme = &url[idx + 3..];
+        if let Some(path_idx) = after_scheme.find('/') {
+            &after_scheme[path_idx..]
+        } else {
+            return (false, None);
+        }
+    } else if url.starts_with('/') {
+        url
+    } else {
+        return (false, None);
+    };
+
+    // Remove query string if present
+    let path = path.split('?').next().unwrap_or(path);
+
+    // Split into segments
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+
+    if segments.is_empty() {
+        return (false, None);
+    }
+
+    // Check each segment for parameterization
+    let mut is_parameterized = false;
+    let mut pattern_segments = Vec::new();
+
+    for segment in segments {
+        if let Some(param_type) = looks_like_id_segment(segment) {
+            is_parameterized = true;
+            pattern_segments.push(param_type.to_string());
+        } else {
+            pattern_segments.push(segment.to_string());
+        }
+    }
+
+    if is_parameterized {
+        let pattern = format!("/{}", pattern_segments.join("/"));
+        (true, Some(pattern))
+    } else {
+        (false, None)
+    }
+}
+
 /// Colorize status code matching feroxbuster's style
 fn colorize_status_code(code: u16) -> String {
     let code_str = code.to_string();
     match code {
-        100..=199 => style(code_str).blue().to_string(),   // informational
-        200..=299 => style(code_str).green().to_string(),  // success
+        100..=199 => style(code_str).blue().to_string(), // informational
+        200..=299 => style(code_str).green().to_string(), // success
         300..=399 => style(code_str).yellow().to_string(), // redirects
-        400..=499 => style(code_str).red().to_string(),    // client error
-        500..=599 => style(code_str).red().to_string(),    // server error
+        400..=499 => style(code_str).red().to_string(),  // client error
+        500..=599 => style(code_str).red().to_string(),  // server error
         _ => code_str,
     }
 }
@@ -736,7 +875,8 @@ mod tests {
         assert!(score >= 4);
 
         // GraphQL endpoint = high value
-        let (interesting, score, _) = PentestReport::is_interesting("/graphql", 200, Some("application/json"));
+        let (interesting, score, _) =
+            PentestReport::is_interesting("/graphql", 200, Some("application/json"));
         assert!(interesting);
         assert!(score >= 4);
 
@@ -755,7 +895,8 @@ mod tests {
         assert!(score < 4);
 
         // Static JS file = noise
-        let (interesting, score, _) = PentestReport::is_interesting("/_next/static/chunks/main.js", 200, None);
+        let (interesting, score, _) =
+            PentestReport::is_interesting("/_next/static/chunks/main.js", 200, None);
         assert!(!interesting);
         assert!(score < 0); // Negative score for static assets
     }

@@ -1,8 +1,8 @@
 use super::utils::{
-    backup_extensions, depth, determine_requester_policy, extract_links, ignored_extensions,
-    methods, parse_request_file, report_and_exit, request_protocol, response_size_limit,
-    save_state, serialized_type, split_header, split_query, status_codes, threads, timeout,
-    user_agent, OutputLevel, RequesterPolicy,
+    backup_extensions, depth, determine_requester_policy, dont_filter_default, extract_links,
+    ignored_extensions, methods, parse_request_file, report_and_exit, request_protocol,
+    response_size_limit, save_state, serialized_type, split_header, split_query, status_codes,
+    threads, timeout, user_agent, OutputLevel, RequesterPolicy,
 };
 
 use crate::config::determine_output_level;
@@ -294,8 +294,8 @@ pub struct Configuration {
     #[serde(default)]
     pub filter_regex: Vec<String>,
 
-    /// Don't auto-filter wildcard responses
-    #[serde(default)]
+    /// Don't auto-filter wildcard responses (default: true for feroxagent pentest use cases)
+    #[serde(default = "super::utils::dont_filter_default")]
     pub dont_filter: bool,
 
     /// Scan started from a state file, not from CLI args
@@ -420,7 +420,9 @@ impl Default for Configuration {
             extract_links,
             replay_client,
             requester_policy,
-            dont_filter: false,
+            // feroxagent defaults to dont_filter=true for pentest use cases
+            // where 401/403 responses matching wildcard patterns are valuable
+            dont_filter: true,
             auto_bail: false,
             auto_tune: false,
             silent: false,
@@ -535,7 +537,7 @@ impl Configuration {
     /// - **add_slash**: `false`
     /// - **stdin**: `false`
     /// - **json**: `false`
-    /// - **dont_filter**: `false` (auto filter wildcard responses)
+    /// - **dont_filter**: `true` (don't auto-filter wildcard responses for pentest use cases)
     /// - **depth**: `4` (maximum recursion depth)
     /// - **force_recursion**: `false` (still respects recursion depth)
     /// - **scan_limit**: `0` (no limit on concurrent scans imposed)
@@ -1408,7 +1410,7 @@ impl Configuration {
             new.filter_status,
             Vec::<u16>::new()
         );
-        update_if_not_default!(&mut conf.dont_filter, new.dont_filter, false);
+        update_if_not_default!(&mut conf.dont_filter, new.dont_filter, dont_filter_default());
         update_if_not_default!(&mut conf.scan_dir_listings, new.scan_dir_listings, false);
         update_if_not_default!(&mut conf.scan_limit, new.scan_limit, 0);
         update_if_not_default!(&mut conf.parallel, new.parallel, 0);

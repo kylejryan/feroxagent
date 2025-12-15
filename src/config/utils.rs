@@ -69,6 +69,13 @@ pub(super) fn status_codes() -> Vec<u16> {
         .collect()
 }
 
+/// default dont_filter value - true for feroxagent pentest use cases
+/// This ensures 401/403 responses matching wildcard patterns are still shown,
+/// which is important for discovering protected endpoints
+pub(super) fn dont_filter_default() -> bool {
+    true
+}
+
 /// default HTTP Method
 pub(super) fn methods() -> Vec<String> {
     vec![DEFAULT_METHOD.to_owned()]

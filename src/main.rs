@@ -31,7 +31,10 @@ use feroxagent::{
     progress::PROGRESS_PRINTER,
     scan_manager::{self, ScanType},
     scanner::{self, RESPONSES},
-    smart_wordlist::{self, output_wordlist, DiscoveredEndpoint, GeneratorConfig, PentestReport},
+    smart_wordlist::{
+        self, detect_parameterized_endpoint, output_wordlist, DiscoveredEndpoint, GeneratorConfig,
+        PentestReport,
+    },
     utils::{fmt_err, slugify_filename},
 };
 #[cfg(not(target_os = "windows"))]
@@ -538,6 +541,14 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
                 pentest_report.stats.total_filtered_noise += 1;
             }
 
+            // Detect if endpoint is parameterized (e.g., /api/products/1 -> /api/products/{id})
+            // Only check for real endpoints, not static assets or noise
+            let (is_parameterized, param_pattern) = if pentest_score >= 0 {
+                detect_parameterized_endpoint(&url)
+            } else {
+                (false, None)
+            };
+
             let endpoint = DiscoveredEndpoint {
                 url,
                 status_code,
@@ -546,6 +557,8 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
                 interesting,
                 pentest_score,
                 notes,
+                is_parameterized,
+                param_pattern,
             };
 
             pentest_report.add_endpoint(endpoint);

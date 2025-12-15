@@ -309,9 +309,9 @@ fn is_interesting_status_diff(baseline: u16, new_status: u16) -> bool {
 
     match (baseline, new_status) {
         (405, 200 | 201 | 204 | 400 | 401) => true, // Method was correct, different response
-        (403, 200 | 201 | 204) => true,              // Potential auth bypass
-        (404, 200 | 201 | 204 | 400 | 401) => true,  // Endpoint exists
-        (_, 500 | 502 | 503) => true,                 // Server error - potential vuln
+        (403, 200 | 201 | 204) => true,             // Potential auth bypass
+        (404, 200 | 201 | 204 | 400 | 401) => true, // Endpoint exists
+        (_, 500 | 502 | 503) => true,               // Server error - potential vuln
         _ => false,
     }
 }
@@ -410,9 +410,9 @@ async fn test_header_mutations(
 /// Check if a status change indicates a header-based bypass
 fn is_header_bypass(baseline: u16, new_status: u16) -> bool {
     match (baseline, new_status) {
-        (401, 200) | (403, 200) => true,  // Auth bypass
-        (401, 302) | (403, 302) => true,  // Redirect (might be to success page)
-        (404, 200) => true,                // Hidden endpoint revealed
+        (401, 200) | (403, 200) => true, // Auth bypass
+        (401, 302) | (403, 302) => true, // Redirect (might be to success page)
+        (404, 200) => true,              // Hidden endpoint revealed
         _ => false,
     }
 }

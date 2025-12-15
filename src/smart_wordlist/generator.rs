@@ -4,6 +4,7 @@
 
 use super::analyzer::{analyze_urls, TechAnalysis};
 use super::llm::ClaudeClient;
+use super::mutations::{expand_parameterized_paths, generate_mutations, MutationConfig};
 use super::probe::{probe_urls, summarize_probe_results};
 use anyhow::{Context, Result};
 use reqwest::Client;
@@ -127,12 +128,13 @@ fn read_recon_urls(recon_file: &Option<String>) -> Result<Vec<String>> {
     Ok(lines)
 }
 
-/// Combine LLM-generated wordlist with paths extracted during analysis
+/// Combine LLM-generated wordlist with paths extracted during analysis and mutations
 fn combine_wordlists(analysis: &TechAnalysis, llm_wordlist: Vec<String>) -> Vec<String> {
     let mut combined: HashSet<String> = HashSet::new();
 
-    // Add LLM-generated paths
-    for path in llm_wordlist {
+    // Expand parameterized paths from LLM output (e.g., /api/products/{id} -> /api/products/1, etc.)
+    let expanded_llm = expand_parameterized_paths(llm_wordlist);
+    for path in expanded_llm {
         combined.insert(path);
     }
 
@@ -146,16 +148,25 @@ fn combine_wordlists(analysis: &TechAnalysis, llm_wordlist: Vec<String>) -> Vec<
         combined.insert(endpoint.clone());
     }
 
-    // Add variations of detected API endpoints
+    // Add variations of detected API endpoints (legacy, kept for backwards compat)
     for endpoint in &analysis.api_endpoints {
-        // Add common variations
         if endpoint.contains("/api/") {
-            // Version variations
             let variations = generate_api_variations(endpoint);
             for var in variations {
                 combined.insert(var);
             }
         }
+    }
+
+    // Generate comprehensive mutations based on discovered patterns
+    let discovered_paths: Vec<String> = analysis.paths.iter().cloned().collect();
+    let mutation_config = MutationConfig::default();
+    let mutations = generate_mutations(&discovered_paths, &analysis.api_endpoints, &mutation_config);
+
+    log::info!("Mutation engine generated {} additional paths", mutations.len());
+
+    for mutation in mutations {
+        combined.insert(mutation);
     }
 
     // Sort and return
