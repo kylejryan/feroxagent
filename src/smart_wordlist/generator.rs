@@ -8,7 +8,7 @@ use super::mutations::{expand_parameterized_paths, generate_mutations, MutationC
 use super::probe::{probe_urls, summarize_probe_results};
 use anyhow::{Context, Result};
 use reqwest::Client;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead};
 
 /// Configuration for wordlist generation
@@ -24,6 +24,24 @@ pub struct GenerationResult {
     pub attack_report: String,
     pub recon_urls: Vec<String>,
     pub technologies: Vec<String>,
+}
+
+/// Configuration for wordlist budgeting to enforce diversity
+#[derive(Debug, Clone)]
+pub struct BudgetConfig {
+    /// Maximum candidates per prefix (e.g., /api/products/* capped at this)
+    pub max_per_prefix: usize,
+    /// Minimum candidates per discovered prefix from recon
+    pub min_per_prefix: usize,
+}
+
+impl Default for BudgetConfig {
+    fn default() -> Self {
+        Self {
+            max_per_prefix: 50,
+            min_per_prefix: 5,
+        }
+    }
 }
 
 /// Generate a smart wordlist and attack surface report from recon data
@@ -86,8 +104,26 @@ pub async fn generate_wordlist(
     let combined_wordlist = combine_wordlists(&analysis, llm_wordlist);
 
     log::info!(
-        "Final wordlist contains {} unique paths",
+        "Combined wordlist contains {} unique paths",
         combined_wordlist.len()
+    );
+
+    // Extract discovered prefixes from recon for budgeting
+    let discovered_prefixes: HashSet<String> = analysis
+        .paths
+        .iter()
+        .chain(analysis.api_endpoints.iter())
+        .map(|p| extract_prefix(p))
+        .collect();
+
+    // Apply wordlist budgeting to enforce diversity
+    let budget_config = BudgetConfig::default();
+    let budgeted_wordlist =
+        budget_wordlist(combined_wordlist, &discovered_prefixes, &budget_config);
+
+    log::info!(
+        "Final wordlist contains {} paths after budgeting",
+        budgeted_wordlist.len()
     );
 
     // Extract technology names for the report
@@ -98,7 +134,7 @@ pub async fn generate_wordlist(
         .collect();
 
     Ok(GenerationResult {
-        wordlist: combined_wordlist,
+        wordlist: budgeted_wordlist,
         attack_report,
         recon_urls,
         technologies,
@@ -266,6 +302,100 @@ fn generate_api_variations(endpoint: &str) -> Vec<String> {
     variations
 }
 
+/// Extract prefix from a path (first 2 segments)
+/// e.g., "/api/products/123/reviews" -> "/api/products"
+fn extract_prefix(path: &str) -> String {
+    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.len() >= 2 {
+        format!("/{}/{}", parts[0], parts[1])
+    } else if parts.len() == 1 {
+        format!("/{}", parts[0])
+    } else {
+        "/".to_string()
+    }
+}
+
+/// Budget wordlist to enforce diversity across prefixes
+///
+/// Groups candidates by their prefix (first 2 path segments) and:
+/// - Caps each group at `max_per_prefix` to prevent over-representation
+/// - Ensures discovered prefixes from recon have at least `min_per_prefix`
+pub fn budget_wordlist(
+    candidates: Vec<String>,
+    discovered_prefixes: &HashSet<String>,
+    config: &BudgetConfig,
+) -> Vec<String> {
+    // Group candidates by prefix
+    let mut prefix_groups: HashMap<String, Vec<String>> = HashMap::new();
+
+    for path in candidates {
+        let prefix = extract_prefix(&path);
+        prefix_groups.entry(prefix).or_default().push(path);
+    }
+
+    let mut result: Vec<String> = Vec::new();
+    let mut prefix_stats: Vec<(String, usize, usize)> = Vec::new(); // (prefix, original, budgeted)
+
+    for (prefix, mut paths) in prefix_groups {
+        let original_count = paths.len();
+        let is_discovered = discovered_prefixes.contains(&prefix);
+
+        // Sort paths to ensure deterministic selection (shorter paths first, then alphabetical)
+        paths.sort_by(|a, b| {
+            let len_cmp = a.len().cmp(&b.len());
+            if len_cmp == std::cmp::Ordering::Equal {
+                a.cmp(b)
+            } else {
+                len_cmp
+            }
+        });
+
+        // Apply cap
+        let capped: Vec<String> = if paths.len() > config.max_per_prefix {
+            paths.into_iter().take(config.max_per_prefix).collect()
+        } else {
+            paths
+        };
+
+        let budgeted_count = capped.len();
+
+        // Track stats for logging
+        if original_count > config.max_per_prefix || is_discovered {
+            prefix_stats.push((prefix.clone(), original_count, budgeted_count));
+        }
+
+        // Warn if discovered prefix has fewer than minimum
+        if is_discovered && budgeted_count < config.min_per_prefix {
+            log::debug!(
+                "Discovered prefix {} has only {} paths (minimum: {})",
+                prefix,
+                budgeted_count,
+                config.min_per_prefix
+            );
+        }
+
+        result.extend(capped);
+    }
+
+    // Log significant caps
+    let capped_count: usize = prefix_stats
+        .iter()
+        .filter(|(_, orig, budgeted)| orig > budgeted)
+        .count();
+
+    if capped_count > 0 {
+        log::info!(
+            "Wordlist budgeting: capped {} prefix groups at {} paths each",
+            capped_count,
+            config.max_per_prefix
+        );
+    }
+
+    // Sort final result
+    result.sort();
+    result
+}
+
 /// Output wordlist to stdout (for --wordlist-only mode)
 pub fn output_wordlist(wordlist: &[String]) {
     for path in wordlist {
@@ -302,5 +432,121 @@ mod tests {
         assert!(combined.contains(&"/existing/path".to_string()));
         assert!(combined.contains(&"/api/users".to_string()));
         assert!(combined.contains(&"/api/admin".to_string()));
+    }
+
+    #[test]
+    fn test_extract_prefix() {
+        assert_eq!(extract_prefix("/api/products/123"), "/api/products");
+        assert_eq!(extract_prefix("/api/products/123/reviews"), "/api/products");
+        assert_eq!(extract_prefix("/admin"), "/admin");
+        assert_eq!(extract_prefix("/"), "/");
+        assert_eq!(extract_prefix("/api/v1/users/456"), "/api/v1");
+    }
+
+    #[test]
+    fn test_budget_wordlist_caps_at_max() {
+        // Create 100 paths under /api/products
+        let candidates: Vec<String> = (0..100).map(|i| format!("/api/products/{}", i)).collect();
+
+        let discovered = HashSet::new();
+        let config = BudgetConfig {
+            max_per_prefix: 50,
+            min_per_prefix: 5,
+        };
+
+        let budgeted = budget_wordlist(candidates, &discovered, &config);
+
+        // Should be capped at 50
+        assert_eq!(budgeted.len(), 50);
+        // All should be from /api/products prefix
+        assert!(budgeted.iter().all(|p| p.starts_with("/api/products/")));
+    }
+
+    #[test]
+    fn test_budget_wordlist_preserves_under_cap() {
+        // Create 30 paths under /api/products
+        let candidates: Vec<String> = (0..30).map(|i| format!("/api/products/{}", i)).collect();
+
+        let discovered = HashSet::new();
+        let config = BudgetConfig {
+            max_per_prefix: 50,
+            min_per_prefix: 5,
+        };
+
+        let budgeted = budget_wordlist(candidates, &discovered, &config);
+
+        // Should preserve all 30
+        assert_eq!(budgeted.len(), 30);
+    }
+
+    #[test]
+    fn test_budget_wordlist_multiple_prefixes() {
+        // Create paths under different prefixes
+        let mut candidates: Vec<String> = Vec::new();
+
+        // 60 paths under /api/products (should be capped)
+        for i in 0..60 {
+            candidates.push(format!("/api/products/{}", i));
+        }
+
+        // 20 paths under /api/users (should be preserved)
+        for i in 0..20 {
+            candidates.push(format!("/api/users/{}", i));
+        }
+
+        // 10 paths under /admin (should be preserved)
+        for i in 0..10 {
+            candidates.push(format!("/admin/page{}", i));
+        }
+
+        let discovered = HashSet::new();
+        let config = BudgetConfig {
+            max_per_prefix: 50,
+            min_per_prefix: 5,
+        };
+
+        let budgeted = budget_wordlist(candidates, &discovered, &config);
+
+        // Should be: 50 (capped) + 20 + 10 = 80
+        assert_eq!(budgeted.len(), 80);
+
+        // Count by prefix
+        let products_count = budgeted
+            .iter()
+            .filter(|p| p.starts_with("/api/products/"))
+            .count();
+        let users_count = budgeted
+            .iter()
+            .filter(|p| p.starts_with("/api/users/"))
+            .count();
+        let admin_count = budgeted.iter().filter(|p| p.starts_with("/admin/")).count();
+
+        assert_eq!(products_count, 50);
+        assert_eq!(users_count, 20);
+        assert_eq!(admin_count, 10);
+    }
+
+    #[test]
+    fn test_budget_wordlist_shorter_paths_preferred() {
+        // Create paths with varying lengths
+        let candidates = vec![
+            "/api/products/123/reviews/456/comments".to_string(),
+            "/api/products/1".to_string(),
+            "/api/products/12/reviews".to_string(),
+            "/api/products/123".to_string(),
+        ];
+
+        let discovered = HashSet::new();
+        let config = BudgetConfig {
+            max_per_prefix: 2,
+            min_per_prefix: 1,
+        };
+
+        let budgeted = budget_wordlist(candidates, &discovered, &config);
+
+        // Should only keep 2, preferring shorter paths
+        assert_eq!(budgeted.len(), 2);
+        assert!(budgeted.contains(&"/api/products/1".to_string()));
+        assert!(budgeted.contains(&"/api/products/123".to_string()));
     }
 }

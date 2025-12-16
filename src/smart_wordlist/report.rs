@@ -1209,6 +1209,98 @@ struct CategorizedRoutes {
     other: Vec<ConsolidatedRoute>,           // 400, etc.
 }
 
+/// Canonical endpoint with merged status codes and annotations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanonicalEndpoint {
+    /// The templated path pattern (e.g., "/api/products/{id}")
+    pub path: String,
+    /// Annotation describing the endpoint status (e.g., "(auth required)")
+    pub annotation: Option<String>,
+    /// Allowed HTTP methods (from OPTIONS discovery)
+    pub methods: Option<Vec<String>>,
+    /// All status codes seen for this endpoint
+    pub status_seen: Vec<u16>,
+    /// Primary status (strongest signal)
+    pub primary_status: u16,
+}
+
+/// Priority for status codes when merging (higher = stronger signal)
+fn status_priority(status: u16) -> u8 {
+    match status {
+        200..=204 => 10,            // Confirmed exists
+        301 | 302 | 307 | 308 => 8, // Redirects
+        401 | 403 => 6,             // Auth required
+        405 => 4,                   // Method mismatch
+        500..=599 => 2,             // Server error
+        400 => 1,                   // Client error (needs params)
+        _ => 0,
+    }
+}
+
+/// Get annotation for a status code
+fn get_status_annotation(status: u16) -> Option<String> {
+    match status {
+        200..=204 => None, // No annotation needed for success
+        301 | 302 | 307 | 308 => Some("(redirects)".to_string()),
+        401 => Some("(auth required)".to_string()),
+        403 => Some("(forbidden)".to_string()),
+        405 => Some("(method mismatch)".to_string()),
+        500..=599 => Some("(server error)".to_string()),
+        400 => Some("(expects params)".to_string()),
+        _ => None,
+    }
+}
+
+/// Generate canonical endpoint inventory from discovered endpoints
+pub fn generate_canonical_inventory(endpoints: &[DiscoveredEndpoint]) -> Vec<CanonicalEndpoint> {
+    // Filter to existence signals and non-junk
+    let valid: Vec<_> = endpoints
+        .iter()
+        .filter(|e| is_existence_signal(e.status_code))
+        .filter(|e| !is_framework_junk(&e.url))
+        .collect();
+
+    // Group by templated path pattern
+    let mut by_pattern: HashMap<String, Vec<&DiscoveredEndpoint>> = HashMap::new();
+    for ep in valid {
+        let pattern = templatize_path(&ep.url);
+        by_pattern.entry(pattern).or_default().push(ep);
+    }
+
+    // Merge each pattern group into a canonical endpoint
+    let mut result: Vec<CanonicalEndpoint> = by_pattern
+        .into_iter()
+        .map(|(pattern, eps)| {
+            // Collect all unique status codes
+            let mut status_seen: Vec<u16> = eps.iter().map(|e| e.status_code).collect();
+            status_seen.sort();
+            status_seen.dedup();
+
+            // Determine primary status (highest priority)
+            let primary_status = status_seen
+                .iter()
+                .max_by_key(|&&s| status_priority(s))
+                .copied()
+                .unwrap_or(200);
+
+            let annotation = get_status_annotation(primary_status);
+
+            CanonicalEndpoint {
+                path: pattern,
+                annotation,
+                methods: None, // Will be populated by OPTIONS discovery if enabled
+                status_seen,
+                primary_status,
+            }
+        })
+        .collect();
+
+    // Sort by path
+    result.sort_by(|a, b| a.path.cmp(&b.path));
+
+    result
+}
+
 fn categorize_routes(routes: Vec<ConsolidatedRoute>) -> CategorizedRoutes {
     let mut cat = CategorizedRoutes::default();
 
@@ -1450,5 +1542,141 @@ mod tests {
         assert!(is_auth_related("/oauth/callback"));
         assert!(is_auth_related("/.well-known/openid-configuration"));
         assert!(!is_auth_related("/api/users"));
+    }
+
+    #[test]
+    fn test_canonical_inventory_merges_status_codes() {
+        let endpoints = vec![
+            DiscoveredEndpoint {
+                url: "http://localhost/api/products/1".to_string(),
+                status_code: 405,
+                content_length: 0,
+                content_type: None,
+                interesting: true,
+                pentest_score: 2,
+                notes: vec![],
+                is_parameterized: true,
+                param_pattern: Some("/api/products/{id}".to_string()),
+            },
+            DiscoveredEndpoint {
+                url: "http://localhost/api/products/2".to_string(),
+                status_code: 200,
+                content_length: 100,
+                content_type: None,
+                interesting: true,
+                pentest_score: 4,
+                notes: vec![],
+                is_parameterized: true,
+                param_pattern: Some("/api/products/{id}".to_string()),
+            },
+        ];
+
+        let inventory = generate_canonical_inventory(&endpoints);
+
+        // Should consolidate to 1 entry with merged status codes
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].path, "/api/products/{id}");
+        // Primary status should be 200 (highest priority)
+        assert_eq!(inventory[0].primary_status, 200);
+        // Both status codes should be recorded
+        assert!(inventory[0].status_seen.contains(&200));
+        assert!(inventory[0].status_seen.contains(&405));
+        // No annotation for 200
+        assert!(inventory[0].annotation.is_none());
+    }
+
+    #[test]
+    fn test_canonical_inventory_annotation_auth_required() {
+        let endpoints = vec![DiscoveredEndpoint {
+            url: "http://localhost/api/orders".to_string(),
+            status_code: 401,
+            content_length: 0,
+            content_type: None,
+            interesting: true,
+            pentest_score: 2,
+            notes: vec![],
+            is_parameterized: false,
+            param_pattern: None,
+        }];
+
+        let inventory = generate_canonical_inventory(&endpoints);
+
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].annotation, Some("(auth required)".to_string()));
+    }
+
+    #[test]
+    fn test_canonical_inventory_annotation_method_mismatch() {
+        let endpoints = vec![DiscoveredEndpoint {
+            url: "http://localhost/api/login".to_string(),
+            status_code: 405,
+            content_length: 0,
+            content_type: None,
+            interesting: true,
+            pentest_score: 2,
+            notes: vec![],
+            is_parameterized: false,
+            param_pattern: None,
+        }];
+
+        let inventory = generate_canonical_inventory(&endpoints);
+
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(
+            inventory[0].annotation,
+            Some("(method mismatch)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_canonical_inventory_filters_404() {
+        let endpoints = vec![
+            DiscoveredEndpoint {
+                url: "http://localhost/api/products".to_string(),
+                status_code: 200,
+                content_length: 100,
+                content_type: None,
+                interesting: true,
+                pentest_score: 4,
+                notes: vec![],
+                is_parameterized: false,
+                param_pattern: None,
+            },
+            DiscoveredEndpoint {
+                url: "http://localhost/nonexistent".to_string(),
+                status_code: 404,
+                content_length: 0,
+                content_type: None,
+                interesting: false,
+                pentest_score: 0,
+                notes: vec![],
+                is_parameterized: false,
+                param_pattern: None,
+            },
+        ];
+
+        let inventory = generate_canonical_inventory(&endpoints);
+
+        // Should only include the 200 response, not the 404
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].path, "/api/products");
+    }
+
+    #[test]
+    fn test_status_priority_ordering() {
+        // 200 should have highest priority
+        assert!(status_priority(200) > status_priority(401));
+        assert!(status_priority(200) > status_priority(405));
+        assert!(status_priority(200) > status_priority(500));
+
+        // 401/403 > 405
+        assert!(status_priority(401) > status_priority(405));
+        assert!(status_priority(403) > status_priority(405));
+
+        // 405 > 500
+        assert!(status_priority(405) > status_priority(500));
+
+        // Redirects are high priority
+        assert!(status_priority(301) > status_priority(401));
     }
 }

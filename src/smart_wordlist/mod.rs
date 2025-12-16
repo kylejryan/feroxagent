@@ -18,11 +18,16 @@ mod report;
 
 pub use analyzer::TechAnalysis;
 pub use generator::{
-    generate_wordlist, output_attack_report, output_wordlist, GenerationResult, GeneratorConfig,
+    budget_wordlist, generate_wordlist, output_attack_report, output_wordlist, BudgetConfig,
+    GenerationResult, GeneratorConfig,
 };
 pub use llm::ClaudeClient;
 pub use mutations::{expand_parameterized_paths, generate_mutations, Framework, MutationConfig};
-pub use probe::{probe_urls, HeaderMutationResults, MethodVariations, ProbeResult};
+pub use probe::{
+    discover_methods, discover_methods_for_405s, probe_urls, HeaderMutationResults,
+    MethodVariations, OptionsResult, ProbeResult,
+};
 pub use report::{
-    detect_parameterized_endpoint, output_report, DiscoveredEndpoint, PentestReport, ReportStats,
+    detect_parameterized_endpoint, generate_canonical_inventory, output_report, CanonicalEndpoint,
+    DiscoveredEndpoint, PentestReport, ReportStats,
 };

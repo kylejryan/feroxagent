@@ -417,6 +417,137 @@ fn is_header_bypass(baseline: u16, new_status: u16) -> bool {
     }
 }
 
+// =============================================================================
+// OPTIONS METHOD DISCOVERY
+// =============================================================================
+
+/// Result of OPTIONS discovery for a single endpoint
+#[derive(Debug, Clone)]
+pub struct OptionsResult {
+    /// The path pattern
+    pub path: String,
+    /// Allowed methods from the Allow header
+    pub allowed_methods: Vec<String>,
+    /// Whether the OPTIONS request succeeded
+    pub success: bool,
+}
+
+/// Discover allowed HTTP methods for a list of endpoints using OPTIONS requests
+///
+/// This is used as a post-scan verification step for 405 Method Not Allowed responses.
+/// The Allow header tells us which methods the server actually accepts.
+pub async fn discover_methods(
+    endpoints: &[String],
+    base_url: &str,
+    client: &Client,
+    concurrency: usize,
+) -> HashMap<String, Vec<String>> {
+    use futures::stream::{self, StreamExt};
+
+    let base = base_url.trim_end_matches('/').to_string();
+
+    let results: Vec<_> = stream::iter(endpoints)
+        .map(|path| {
+            let base = base.clone();
+            let path = path.clone();
+            let client = client.clone();
+            async move {
+                let url = format!("{}{}", base, path);
+                options_request(&url, &path, &client).await
+            }
+        })
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
+    // Build the map of path -> methods
+    let mut method_map: HashMap<String, Vec<String>> = HashMap::new();
+
+    for result in results.into_iter().flatten() {
+        if result.success && !result.allowed_methods.is_empty() {
+            method_map.insert(result.path, result.allowed_methods);
+        }
+    }
+
+    if !method_map.is_empty() {
+        log::info!(
+            "OPTIONS discovery found methods for {} endpoints",
+            method_map.len()
+        );
+    }
+
+    method_map
+}
+
+/// Send an OPTIONS request and parse the Allow header
+async fn options_request(url: &str, path: &str, client: &Client) -> Option<OptionsResult> {
+    let timeout = Duration::from_secs(5);
+
+    let response = client
+        .request(Method::OPTIONS, url)
+        .timeout(timeout)
+        .send()
+        .await
+        .ok()?;
+
+    let status = response.status().as_u16();
+
+    // OPTIONS should return 200, 204, or 405 with Allow header
+    if status != 200 && status != 204 && status != 405 {
+        return Some(OptionsResult {
+            path: path.to_string(),
+            allowed_methods: vec![],
+            success: false,
+        });
+    }
+
+    // Parse the Allow header
+    let allowed_methods = response
+        .headers()
+        .get("allow")
+        .and_then(|v| v.to_str().ok())
+        .map(|header| {
+            header
+                .split(',')
+                .map(|m| m.trim().to_uppercase())
+                .filter(|m| !m.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    Some(OptionsResult {
+        path: path.to_string(),
+        allowed_methods,
+        success: true,
+    })
+}
+
+/// Discover methods for endpoints that returned 405 (Method Not Allowed)
+/// This is the main entry point for post-scan OPTIONS discovery
+pub async fn discover_methods_for_405s(
+    endpoints: &[super::report::CanonicalEndpoint],
+    base_url: &str,
+    client: &Client,
+) -> HashMap<String, Vec<String>> {
+    // Filter to only 405 endpoints
+    let paths_405: Vec<String> = endpoints
+        .iter()
+        .filter(|e| e.status_seen.contains(&405))
+        .map(|e| e.path.clone())
+        .collect();
+
+    if paths_405.is_empty() {
+        return HashMap::new();
+    }
+
+    log::info!(
+        "Running OPTIONS discovery on {} endpoints with 405 status",
+        paths_405.len()
+    );
+
+    discover_methods(&paths_405, base_url, client, 10).await
+}
+
 /// Generate a summary of probe results for the LLM
 pub fn summarize_probe_results(results: &[ProbeResult]) -> String {
     let mut summary = String::new();
@@ -568,5 +699,74 @@ mod tests {
         assert!(selected.len() <= 3);
         // API endpoints should be prioritized
         assert!(selected.iter().any(|u| u.contains("/api/")));
+    }
+
+    #[test]
+    fn test_is_interesting_status_diff() {
+        // 405 -> 200 should be interesting (found the right method)
+        assert!(is_interesting_status_diff(405, 200));
+        assert!(is_interesting_status_diff(405, 201));
+
+        // 403 -> 200 should be interesting (auth bypass)
+        assert!(is_interesting_status_diff(403, 200));
+
+        // 404 -> 200 should be interesting (endpoint exists with different method)
+        assert!(is_interesting_status_diff(404, 200));
+
+        // Any -> 500 should be interesting (potential vuln)
+        assert!(is_interesting_status_diff(200, 500));
+
+        // Same status not interesting
+        assert!(!is_interesting_status_diff(200, 200));
+    }
+
+    #[test]
+    fn test_should_test_methods() {
+        // 405 always tests methods
+        assert!(should_test_methods("/anything", 405));
+
+        // API endpoints test methods
+        assert!(should_test_methods("/api/users", 200));
+        assert!(should_test_methods("/graphql", 200));
+
+        // Auth endpoints test methods
+        assert!(should_test_methods("/auth/login", 200));
+        assert!(should_test_methods("/login", 200));
+
+        // Regular endpoint without interesting status doesn't test
+        assert!(!should_test_methods("/about", 200));
+    }
+
+    #[test]
+    fn test_should_test_headers() {
+        // 401/403 always test headers
+        assert!(should_test_headers("/anything", 401));
+        assert!(should_test_headers("/anything", 403));
+
+        // Admin/internal paths test headers
+        assert!(should_test_headers("/admin/dashboard", 200));
+        assert!(should_test_headers("/internal/api", 200));
+        assert!(should_test_headers("/private/data", 200));
+
+        // Regular endpoint doesn't test headers
+        assert!(!should_test_headers("/about", 200));
+    }
+
+    #[test]
+    fn test_is_header_bypass() {
+        // 401/403 -> 200 is a bypass
+        assert!(is_header_bypass(401, 200));
+        assert!(is_header_bypass(403, 200));
+
+        // 401/403 -> 302 could be bypass (redirect to success)
+        assert!(is_header_bypass(401, 302));
+        assert!(is_header_bypass(403, 302));
+
+        // 404 -> 200 is interesting (hidden endpoint)
+        assert!(is_header_bypass(404, 200));
+
+        // Same status not a bypass
+        assert!(!is_header_bypass(401, 401));
+        assert!(!is_header_bypass(403, 403));
     }
 }
