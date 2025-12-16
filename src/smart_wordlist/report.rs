@@ -1452,8 +1452,7 @@ fn extract_last_segment(url: &str) -> Option<String> {
 
     // Get last segment
     path.split('/')
-        .filter(|s| !s.is_empty())
-        .next_back()
+        .rfind(|s| !s.is_empty())
         .map(|s| s.to_string())
 }
 
