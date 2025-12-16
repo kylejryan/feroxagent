@@ -107,6 +107,7 @@ Register-ArgumentCompleter -Native -CommandName 'feroxbuster' -ScriptBlock {
             [CompletionResult]::new('--extract-links', '--extract-links', [CompletionResultType]::ParameterName, 'Extract links from response body (html, javascript, etc...); make new requests based on findings (default: true)')
             [CompletionResult]::new('--dont-extract-links', '--dont-extract-links', [CompletionResultType]::ParameterName, 'Don''t extract links from response body (html, javascript, etc...)')
             [CompletionResult]::new('--wordlist-only', '--wordlist-only', [CompletionResultType]::ParameterName, 'Output generated wordlist to stdout without scanning')
+            [CompletionResult]::new('--discover-methods', '--discover-methods', [CompletionResultType]::ParameterName, 'Run OPTIONS requests on 405 endpoints to discover allowed methods')
             [CompletionResult]::new('--auto-tune', '--auto-tune', [CompletionResultType]::ParameterName, 'Automatically lower scan rate when an excessive amount of errors are encountered')
             [CompletionResult]::new('--auto-bail', '--auto-bail', [CompletionResultType]::ParameterName, 'Automatically stop scanning when an excessive amount of errors are encountered')
             [CompletionResult]::new('-D', '-D ', [CompletionResultType]::ParameterName, 'Don''t auto-filter wildcard responses')

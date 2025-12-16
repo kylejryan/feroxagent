@@ -24,10 +24,13 @@ pub use generator::{
 pub use llm::ClaudeClient;
 pub use mutations::{expand_parameterized_paths, generate_mutations, Framework, MutationConfig};
 pub use probe::{
-    discover_methods, discover_methods_for_405s, probe_urls, HeaderMutationResults,
-    MethodVariations, OptionsResult, ProbeResult,
+    confirm_methods, confirm_methods_batch, discover_methods, discover_methods_for_405s,
+    fingerprint_api_prefixes, fingerprint_wildcard_prefix, probe_urls, HeaderMutationResults,
+    MethodConfirmation, MethodVariations, OptionsResult, ProbeResult, ResponseFingerprint,
+    WildcardFingerprint,
 };
 pub use report::{
-    detect_parameterized_endpoint, generate_canonical_inventory, output_report, CanonicalEndpoint,
+    detect_parameterized_endpoint, generate_canonical_inventory,
+    generate_canonical_inventory_with_wildcards, output_report, CanonicalEndpoint,
     DiscoveredEndpoint, PentestReport, ReportStats,
 };

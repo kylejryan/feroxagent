@@ -32,8 +32,9 @@ use feroxagent::{
     scan_manager::{self, ScanType},
     scanner::{self, RESPONSES},
     smart_wordlist::{
-        self, detect_parameterized_endpoint, output_wordlist, DiscoveredEndpoint, GeneratorConfig,
-        PentestReport,
+        self, confirm_methods_batch, detect_parameterized_endpoint, discover_methods_for_405s,
+        fingerprint_api_prefixes, generate_canonical_inventory_with_wildcards, output_wordlist,
+        DiscoveredEndpoint, GeneratorConfig, PentestReport,
     },
     utils::{fmt_err, slugify_filename},
 };
@@ -564,6 +565,149 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
             pentest_report.add_endpoint(endpoint);
         }
     }
+
+    // Step 1: Identify potential wildcard/catch-all API prefixes
+    // First, do a quick scan of discovered endpoints to find templated paths
+    let potential_prefixes: Vec<String> = pentest_report
+        .discovered_endpoints
+        .iter()
+        .filter_map(|e| {
+            // Look for URLs that have numeric IDs or UUIDs which become templated
+            let url = &e.url;
+            let path = if let Some(idx) = url.find("://") {
+                let after_scheme = &url[idx + 3..];
+                if let Some(path_idx) = after_scheme.find('/') {
+                    &after_scheme[path_idx..]
+                } else {
+                    return None;
+                }
+            } else if url.starts_with('/') {
+                url.as_str()
+            } else {
+                return None;
+            };
+
+            // Find paths that look parameterized (have numeric segments)
+            let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+            for (i, seg) in segments.iter().enumerate() {
+                // Check if this segment looks like an ID (numeric, uuid, etc.)
+                if seg.parse::<i64>().is_ok()
+                    || (seg.len() == 36 && seg.chars().filter(|&c| c == '-').count() == 4)
+                {
+                    // Return the prefix up to this segment
+                    let prefix = format!("/{}/", segments[..i].join("/"));
+                    return Some(prefix);
+                }
+            }
+            None
+        })
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Fingerprint these prefixes for wildcard behavior
+    let wildcard_prefixes: std::collections::HashSet<String> = if !potential_prefixes.is_empty() {
+        log::info!(
+            "Fingerprinting {} potential wildcard prefixes...",
+            potential_prefixes.len()
+        );
+        let prefix_refs: Vec<&str> = potential_prefixes.iter().map(|s| s.as_str()).collect();
+        let fingerprints =
+            fingerprint_api_prefixes(&config.target_url, &config.client, &prefix_refs).await;
+
+        // Only keep prefixes that showed wildcard behavior
+        let wildcard_set: std::collections::HashSet<String> =
+            fingerprints.keys().cloned().collect();
+
+        if !wildcard_set.is_empty() {
+            log::info!(
+                "Detected {} wildcard param prefixes: {:?}",
+                wildcard_set.len(),
+                wildcard_set
+            );
+        }
+
+        wildcard_set
+    } else {
+        std::collections::HashSet::new()
+    };
+
+    // Step 2: Generate canonical inventory with wildcard awareness
+    // This will suppress fixed children under wildcard prefixes (e.g., /api/products/all)
+    // and only keep templated paths (e.g., /api/products/{id})
+    let mut canonical_endpoints = generate_canonical_inventory_with_wildcards(
+        &pentest_report.discovered_endpoints,
+        &wildcard_prefixes,
+    );
+
+    // Step 3: Run OPTIONS discovery for 405 endpoints (Allow header as hint only)
+    if config.discover_methods {
+        log::info!("Running OPTIONS discovery on 405 endpoints...");
+        let method_map =
+            discover_methods_for_405s(&canonical_endpoints, &config.target_url, &config.client)
+                .await;
+
+        // Update canonical endpoints with Allow header hints
+        for endpoint in &mut canonical_endpoints {
+            if let Some(methods) = method_map.get(&endpoint.path) {
+                // Store as hint only - not confirmed until empirically tested
+                endpoint.allow_hint = Some(methods.clone());
+            }
+        }
+
+        // Step 4: Empirical method confirmation for non-wildcard endpoints
+        let paths_to_confirm: Vec<String> = canonical_endpoints
+            .iter()
+            .filter(|e| {
+                e.status_seen
+                    .iter()
+                    .any(|s| *s == 405 || *s == 401 || *s == 403)
+            })
+            .map(|e| e.path.clone())
+            .collect();
+
+        if !paths_to_confirm.is_empty() {
+            log::info!(
+                "Confirming methods for {} endpoints...",
+                paths_to_confirm.len()
+            );
+            let confirmations = confirm_methods_batch(
+                &paths_to_confirm,
+                &config.target_url,
+                &config.client,
+                10, // concurrency
+            )
+            .await;
+
+            // Update endpoints with confirmed methods
+            for endpoint in &mut canonical_endpoints {
+                if let Some(confirmation) = confirmations.get(&endpoint.path) {
+                    if !confirmation.confirmed_methods.is_empty() {
+                        endpoint.confirmed_methods = Some(confirmation.confirmed_methods.clone());
+                    }
+                    if !confirmation.auth_required_methods.is_empty() {
+                        endpoint.auth_required_methods =
+                            Some(confirmation.auth_required_methods.clone());
+                    }
+                    // Update allow_hint from confirmation if we got one
+                    if endpoint.allow_hint.is_none() {
+                        if let Some(ref hint) = confirmation.allow_hint {
+                            endpoint.allow_hint = Some(hint.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // No need to filter - generate_canonical_inventory_with_wildcards already did it
+    let filtered_endpoints: Vec<_> = canonical_endpoints
+        .into_iter()
+        .filter(|e| !e.is_wildcard)
+        .collect();
+
+    // Set canonical endpoints on the report
+    pentest_report.set_canonical_endpoints(filtered_endpoints);
 
     // Output the comprehensive report
     eprintln!("{}", pentest_report.generate_output());

@@ -548,6 +548,399 @@ pub async fn discover_methods_for_405s(
     discover_methods(&paths_405, base_url, client, 10).await
 }
 
+// =============================================================================
+// WILDCARD 405 FINGERPRINTING
+// =============================================================================
+
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+/// Fingerprint for detecting wildcard/catch-all router behavior
+#[derive(Debug, Clone)]
+pub struct WildcardFingerprint {
+    /// The prefix being fingerprinted (e.g., "/api/products/")
+    pub prefix: String,
+    /// GET request fingerprint
+    pub get_fingerprint: Option<ResponseFingerprint>,
+    /// OPTIONS request fingerprint
+    pub options_fingerprint: Option<ResponseFingerprint>,
+}
+
+/// Fingerprint of a single HTTP response
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResponseFingerprint {
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub content_length: Option<u64>,
+    pub body_hash: u64,
+    pub allow_header: Option<String>,
+}
+
+impl ResponseFingerprint {
+    /// Check if two fingerprints match (indicating wildcard behavior)
+    pub fn matches(&self, other: &ResponseFingerprint) -> bool {
+        // Status must match
+        if self.status != other.status {
+            return false;
+        }
+
+        // If both have body hashes, they must match
+        if self.body_hash != 0 && other.body_hash != 0 && self.body_hash != other.body_hash {
+            return false;
+        }
+
+        // If both have content types, they should match
+        if let (Some(ref ct1), Some(ref ct2)) = (&self.content_type, &other.content_type) {
+            if ct1 != ct2 {
+                return false;
+            }
+        }
+
+        // If both have Allow headers (for OPTIONS), they must match
+        if let (Some(ref a1), Some(ref a2)) = (&self.allow_header, &other.allow_header) {
+            if a1 != a2 {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+/// Generate a canary path for fingerprinting
+fn generate_canary_path(prefix: &str) -> String {
+    let uuid = uuid::Uuid::new_v4();
+    format!("{}.ferox_canary_{}", prefix.trim_end_matches('/'), uuid)
+}
+
+/// Hash the first N bytes of a body for fingerprinting
+fn hash_body(body: &[u8], max_bytes: usize) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    let slice = if body.len() > max_bytes {
+        &body[..max_bytes]
+    } else {
+        body
+    };
+    slice.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Fingerprint a prefix by probing a canary path
+pub async fn fingerprint_wildcard_prefix(
+    prefix: &str,
+    base_url: &str,
+    client: &Client,
+) -> Option<WildcardFingerprint> {
+    let timeout = Duration::from_secs(5);
+    let canary_path = generate_canary_path(prefix);
+    let url = format!("{}{}", base_url.trim_end_matches('/'), canary_path);
+
+    // GET fingerprint
+    let get_fingerprint = match client.get(&url).timeout(timeout).send().await {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let content_type = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let content_length = resp
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse().ok());
+            let body = resp.bytes().await.unwrap_or_default();
+            let body_hash = hash_body(&body, 1024);
+
+            Some(ResponseFingerprint {
+                status,
+                content_type,
+                content_length,
+                body_hash,
+                allow_header: None,
+            })
+        }
+        Err(_) => None,
+    };
+
+    // OPTIONS fingerprint
+    let options_fingerprint = match client
+        .request(Method::OPTIONS, &url)
+        .timeout(timeout)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let content_type = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let allow_header = resp
+                .headers()
+                .get("allow")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let content_length = resp
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse().ok());
+
+            Some(ResponseFingerprint {
+                status,
+                content_type,
+                content_length,
+                body_hash: 0, // OPTIONS usually has no body
+                allow_header,
+            })
+        }
+        Err(_) => None,
+    };
+
+    // Only return fingerprint if we got at least a GET response
+    if get_fingerprint.is_some() {
+        log::debug!(
+            "Fingerprinted wildcard prefix {}: GET={:?}, OPTIONS={:?}",
+            prefix,
+            get_fingerprint.as_ref().map(|f| f.status),
+            options_fingerprint.as_ref().map(|f| f.status)
+        );
+
+        Some(WildcardFingerprint {
+            prefix: prefix.to_string(),
+            get_fingerprint,
+            options_fingerprint,
+        })
+    } else {
+        None
+    }
+}
+
+/// Check if a path matches a wildcard fingerprint
+pub async fn matches_wildcard(
+    path: &str,
+    base_url: &str,
+    fingerprint: &WildcardFingerprint,
+    client: &Client,
+) -> bool {
+    // Only check paths under this prefix
+    if !path.starts_with(&fingerprint.prefix) {
+        return false;
+    }
+
+    let timeout = Duration::from_secs(5);
+    let url = format!("{}{}", base_url.trim_end_matches('/'), path);
+
+    // Check GET fingerprint
+    if let Some(ref canary_fp) = fingerprint.get_fingerprint {
+        if let Ok(resp) = client.get(&url).timeout(timeout).send().await {
+            let status = resp.status().as_u16();
+            let content_type = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let content_length = resp
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse().ok());
+            let body = resp.bytes().await.unwrap_or_default();
+            let body_hash = hash_body(&body, 1024);
+
+            let test_fp = ResponseFingerprint {
+                status,
+                content_type,
+                content_length,
+                body_hash,
+                allow_header: None,
+            };
+
+            if canary_fp.matches(&test_fp) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Fingerprint multiple API prefixes that might have wildcard behavior
+pub async fn fingerprint_api_prefixes(
+    base_url: &str,
+    client: &Client,
+    prefixes: &[&str],
+) -> HashMap<String, WildcardFingerprint> {
+    let mut fingerprints = HashMap::new();
+
+    for prefix in prefixes {
+        if let Some(fp) = fingerprint_wildcard_prefix(prefix, base_url, client).await {
+            // Only keep fingerprints that look like wildcards (405 or 404 on GET)
+            if let Some(ref get_fp) = fp.get_fingerprint {
+                if get_fp.status == 404 || get_fp.status == 405 {
+                    log::info!(
+                        "Detected wildcard behavior at {} (canary returns {})",
+                        prefix,
+                        get_fp.status
+                    );
+                    fingerprints.insert(prefix.to_string(), fp);
+                }
+            }
+        }
+    }
+
+    fingerprints
+}
+
+// =============================================================================
+// EMPIRICAL METHOD CONFIRMATION
+// =============================================================================
+
+/// Confirmed methods for an endpoint based on actual probing
+#[derive(Debug, Clone)]
+pub struct MethodConfirmation {
+    /// The path being tested
+    pub path: String,
+    /// Methods confirmed to work (response != 404/405)
+    pub confirmed_methods: Vec<String>,
+    /// Methods that returned auth required (401/403)
+    pub auth_required_methods: Vec<String>,
+    /// Allow header hint (if available)
+    pub allow_hint: Option<Vec<String>>,
+}
+
+/// Check if a status code indicates the method is supported
+fn method_supported(status: u16) -> bool {
+    // 404 and 405 mean not supported
+    // Everything else (including 401, 403, 400, 500) means the endpoint exists
+    status != 404 && status != 405
+}
+
+/// Confirm which methods are actually supported by an endpoint
+pub async fn confirm_methods(path: &str, base_url: &str, client: &Client) -> MethodConfirmation {
+    let timeout = Duration::from_secs(5);
+    let url = format!("{}{}", base_url.trim_end_matches('/'), path);
+
+    let mut confirmed = Vec::new();
+    let mut auth_required = Vec::new();
+
+    // Test GET
+    if let Ok(resp) = client.get(&url).timeout(timeout).send().await {
+        let status = resp.status().as_u16();
+        if method_supported(status) {
+            confirmed.push("GET".to_string());
+            if status == 401 || status == 403 {
+                auth_required.push("GET".to_string());
+            }
+        }
+    }
+
+    // Test POST with empty JSON body (safe)
+    if let Ok(resp) = client
+        .post(&url)
+        .timeout(timeout)
+        .header("Content-Type", "application/json")
+        .body("{}")
+        .send()
+        .await
+    {
+        let status = resp.status().as_u16();
+        if method_supported(status) {
+            confirmed.push("POST".to_string());
+            if status == 401 || status == 403 {
+                auth_required.push("POST".to_string());
+            }
+        }
+    }
+
+    // Test PUT with empty JSON body (safe)
+    if let Ok(resp) = client
+        .put(&url)
+        .timeout(timeout)
+        .header("Content-Type", "application/json")
+        .body("{}")
+        .send()
+        .await
+    {
+        let status = resp.status().as_u16();
+        if method_supported(status) {
+            confirmed.push("PUT".to_string());
+            if status == 401 || status == 403 {
+                auth_required.push("PUT".to_string());
+            }
+        }
+    }
+
+    // Test DELETE
+    if let Ok(resp) = client.delete(&url).timeout(timeout).send().await {
+        let status = resp.status().as_u16();
+        if method_supported(status) {
+            confirmed.push("DELETE".to_string());
+            if status == 401 || status == 403 {
+                auth_required.push("DELETE".to_string());
+            }
+        }
+    }
+
+    // Get Allow header hint via OPTIONS
+    let allow_hint = match client
+        .request(Method::OPTIONS, &url)
+        .timeout(timeout)
+        .send()
+        .await
+    {
+        Ok(resp) => resp
+            .headers()
+            .get("allow")
+            .and_then(|v| v.to_str().ok())
+            .map(|header| {
+                header
+                    .split(',')
+                    .map(|m| m.trim().to_uppercase())
+                    .filter(|m| !m.is_empty())
+                    .collect()
+            }),
+        Err(_) => None,
+    };
+
+    MethodConfirmation {
+        path: path.to_string(),
+        confirmed_methods: confirmed,
+        auth_required_methods: auth_required,
+        allow_hint,
+    }
+}
+
+/// Confirm methods for multiple endpoints
+pub async fn confirm_methods_batch(
+    paths: &[String],
+    base_url: &str,
+    client: &Client,
+    concurrency: usize,
+) -> HashMap<String, MethodConfirmation> {
+    use futures::stream::{self, StreamExt};
+
+    let base = base_url.trim_end_matches('/').to_string();
+
+    let results: Vec<_> = stream::iter(paths)
+        .map(|path| {
+            let base = base.clone();
+            let path = path.clone();
+            let client = client.clone();
+            async move {
+                let confirmation = confirm_methods(&path, &base, &client).await;
+                (path, confirmation)
+            }
+        })
+        .buffer_unordered(concurrency)
+        .collect()
+        .await;
+
+    results.into_iter().collect()
+}
+
 /// Generate a summary of probe results for the LLM
 pub fn summarize_probe_results(results: &[ProbeResult]) -> String {
     let mut summary = String::new();

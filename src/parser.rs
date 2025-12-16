@@ -583,7 +583,14 @@ pub fn initialize() -> Command {
                 .help_heading("Smart wordlist settings")
                 .help("Output generated wordlist to stdout without scanning"),
         )
-.arg(
+        .arg(
+            Arg::new("discover_methods")
+                .long("discover-methods")
+                .num_args(0)
+                .help_heading("Smart wordlist settings")
+                .help("Run OPTIONS requests on 405 endpoints to discover allowed methods"),
+        )
+        .arg(
             Arg::new("auto_tune")
                 .long("auto-tune")
                 .num_args(0)

@@ -55,6 +55,7 @@ complete -c feroxbuster -l force-recursion -d 'Force recursion attempts on all \
 complete -c feroxbuster -s e -l extract-links -d 'Extract links from response body (html, javascript, etc...); make new requests based on findings (default: true)'
 complete -c feroxbuster -l dont-extract-links -d 'Don\'t extract links from response body (html, javascript, etc...)'
 complete -c feroxbuster -l wordlist-only -d 'Output generated wordlist to stdout without scanning'
+complete -c feroxbuster -l discover-methods -d 'Run OPTIONS requests on 405 endpoints to discover allowed methods'
 complete -c feroxbuster -l auto-tune -d 'Automatically lower scan rate when an excessive amount of errors are encountered'
 complete -c feroxbuster -l auto-bail -d 'Automatically stop scanning when an excessive amount of errors are encountered'
 complete -c feroxbuster -s D -l dont-filter -d 'Don\'t auto-filter wildcard responses'

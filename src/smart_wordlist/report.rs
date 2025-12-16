@@ -50,6 +50,9 @@ pub struct PentestReport {
     /// High-value findings (interesting status codes, sensitive paths)
     pub high_value_findings: Vec<DiscoveredEndpoint>,
 
+    /// Canonical endpoint inventory (deduplicated, templated)
+    pub canonical_endpoints: Vec<CanonicalEndpoint>,
+
     /// Summary statistics
     pub stats: ReportStats,
 }
@@ -74,6 +77,7 @@ impl PentestReport {
             attack_surface_report: String::new(),
             discovered_endpoints: Vec::new(),
             high_value_findings: Vec::new(),
+            canonical_endpoints: Vec::new(),
             stats: ReportStats::default(),
         }
     }
@@ -92,6 +96,11 @@ impl PentestReport {
     /// Set detected technologies
     pub fn set_technologies(&mut self, techs: Vec<String>) {
         self.technologies = techs;
+    }
+
+    /// Set canonical endpoint inventory
+    pub fn set_canonical_endpoints(&mut self, endpoints: Vec<CanonicalEndpoint>) {
+        self.canonical_endpoints = endpoints;
     }
 
     /// Add a discovered endpoint
@@ -427,6 +436,122 @@ impl PentestReport {
                 output.push_str(&format_route(route));
             }
             output.push_str("───────────────────────────────────────────────────────────────────────────────────\n");
+        }
+
+        // CANONICAL ENDPOINTS - deduplicated, templated list
+        if !self.canonical_endpoints.is_empty() {
+            output.push_str(&format!(
+                " 📌  {}\n",
+                style("Canonical Endpoints").bright().white()
+            ));
+            output.push_str("───────────────────────────────────────────────────────────────────────────────────\n");
+
+            // Collect all observed param values for the variants section
+            let mut all_observed_variants: Vec<(String, Vec<String>)> = Vec::new();
+
+            for endpoint in &self.canonical_endpoints {
+                let mut line = format!("     {}", endpoint.path);
+
+                // Add methods and annotation info
+                // Priority: confirmed methods > allow hint > annotation
+                if let Some(ref confirmed) = endpoint.confirmed_methods {
+                    // Show empirically confirmed methods
+                    if !confirmed.is_empty() {
+                        line.push_str(&format!(
+                            " {}",
+                            style(format!("(methods: {})", confirmed.join(", "))).green()
+                        ));
+                    }
+                }
+
+                // Show auth-required methods if any
+                if let Some(ref auth_methods) = endpoint.auth_required_methods {
+                    if !auth_methods.is_empty() {
+                        line.push_str(&format!(
+                            " {}",
+                            style(format!("(auth: {})", auth_methods.join(", "))).yellow()
+                        ));
+                    }
+                }
+
+                // Show Allow header hint if no confirmed methods
+                if endpoint.confirmed_methods.is_none() {
+                    if let Some(ref hint) = endpoint.allow_hint {
+                        if !hint.is_empty() {
+                            line.push_str(&format!(
+                                " {}",
+                                style(format!("(Allow hint: {})", hint.join(", "))).dim()
+                            ));
+                        }
+                    } else if let Some(ref annotation) = endpoint.annotation {
+                        // Fall back to status annotation
+                        line.push_str(&format!(" {}", style(annotation).dim()));
+                    }
+                }
+
+                // Show catch-all param route indicator with variant count
+                if endpoint.is_catch_all_param {
+                    line.push_str(&format!(
+                        " {}",
+                        style(format!(
+                            "(catch-all param; {} variants)",
+                            endpoint.variant_count
+                        ))
+                        .cyan()
+                    ));
+
+                    // Collect observed variants for separate section
+                    if !endpoint.observed_param_values.is_empty() {
+                        all_observed_variants.push((
+                            endpoint.path.clone(),
+                            endpoint.observed_param_values.clone(),
+                        ));
+                    }
+                } else if endpoint.variant_count > 1 {
+                    // Regular variant count for non-catch-all
+                    line.push_str(&format!(
+                        " {}",
+                        style(format!("({} variants)", endpoint.variant_count)).dim()
+                    ));
+                }
+
+                output.push_str(&format!("{}\n", line));
+            }
+
+            output.push_str("───────────────────────────────────────────────────────────────────────────────────\n");
+
+            // OBSERVED PARAMETER VARIANTS section (for fuzzing reference)
+            if !all_observed_variants.is_empty() {
+                output.push_str(&format!(
+                    " 🧪  {} {}\n",
+                    style("Observed Parameter Variants").bright().white(),
+                    style("(non-canonical, for fuzzing)").dim()
+                ));
+                output.push_str("───────────────────────────────────────────────────────────────────────────────────\n");
+
+                for (path, variants) in &all_observed_variants {
+                    // Truncate variants list if too long
+                    let display_variants: Vec<_> = variants.iter().take(20).collect();
+                    let truncated = variants.len() > 20;
+
+                    output.push_str(&format!(
+                        "     {} → {}{}\n",
+                        style(path).dim(),
+                        display_variants
+                            .iter()
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        if truncated {
+                            format!(" (+{} more)", variants.len() - 20)
+                        } else {
+                            String::new()
+                        }
+                    ));
+                }
+
+                output.push_str("───────────────────────────────────────────────────────────────────────────────────\n");
+            }
         }
 
         // Original recon URLs from katana/gospider/etc
@@ -1216,12 +1341,24 @@ pub struct CanonicalEndpoint {
     pub path: String,
     /// Annotation describing the endpoint status (e.g., "(auth required)")
     pub annotation: Option<String>,
-    /// Allowed HTTP methods (from OPTIONS discovery)
-    pub methods: Option<Vec<String>>,
+    /// Confirmed methods via empirical probing (response != 404/405)
+    pub confirmed_methods: Option<Vec<String>>,
+    /// Allow header hint (not trusted as truth)
+    pub allow_hint: Option<Vec<String>>,
+    /// Methods that require auth (401/403)
+    pub auth_required_methods: Option<Vec<String>>,
     /// All status codes seen for this endpoint
     pub status_seen: Vec<u16>,
     /// Primary status (strongest signal)
     pub primary_status: u16,
+    /// Number of concrete URL variants collapsed into this pattern
+    pub variant_count: usize,
+    /// Whether this matches wildcard behavior (should be suppressed)
+    pub is_wildcard: bool,
+    /// Whether this is a catch-all param route under a wildcard prefix
+    pub is_catch_all_param: bool,
+    /// Observed parameter values that hit this route (for fuzzing reference)
+    pub observed_param_values: Vec<String>,
 }
 
 /// Priority for status codes when merging (higher = stronger signal)
@@ -1251,8 +1388,93 @@ fn get_status_annotation(status: u16) -> Option<String> {
     }
 }
 
+/// Normalize a path (remove double slashes, trailing slashes for non-root)
+fn normalize_path(path: &str) -> String {
+    // Replace multiple slashes with single slash
+    let mut normalized = path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+
+    // Ensure it starts with /
+    if !normalized.starts_with('/') {
+        normalized = format!("/{}", normalized);
+    }
+
+    // Remove trailing slash unless it's the root
+    if normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+
+    normalized
+}
+
+/// Check if a path is a canonical API path (not internal Next.js junk)
+fn is_canonical_api_path(path: &str) -> bool {
+    // Include explicit API paths and common UI routes
+    let api_patterns = ["/api/", "/admin", "/auth", "/login", "/logout", "/graphql"];
+
+    // Exclude Next.js internals and redirect artifacts
+    let exclude_patterns = [
+        "/_next/",
+        "/app/",
+        "/image/",
+        "/__nextjs",
+        "/static/chunks/",
+        "/webpack",
+    ];
+
+    // Check exclusions first
+    if exclude_patterns.iter().any(|p| path.contains(p)) {
+        return false;
+    }
+
+    // Check if it's an API-like path
+    api_patterns.iter().any(|p| path.contains(p)) || path == "/"
+}
+
+/// Extract the last path segment from a URL (the parameter value)
+fn extract_last_segment(url: &str) -> Option<String> {
+    let path = if let Some(idx) = url.find("://") {
+        let after_scheme = &url[idx + 3..];
+        if let Some(path_idx) = after_scheme.find('/') {
+            &after_scheme[path_idx..]
+        } else {
+            return None;
+        }
+    } else if url.starts_with('/') {
+        url
+    } else {
+        return None;
+    };
+
+    // Remove query string
+    let path = path.split('?').next().unwrap_or(path);
+
+    // Get last segment
+    path.split('/')
+        .filter(|s| !s.is_empty())
+        .last()
+        .map(|s| s.to_string())
+}
+
+/// Check if a path segment is a fixed child (not a parameter placeholder)
+fn is_fixed_child(segment: &str) -> bool {
+    !segment.starts_with('{') && !segment.ends_with('}')
+}
+
 /// Generate canonical endpoint inventory from discovered endpoints
+/// This version is wildcard-aware and suppresses fixed children under wildcard prefixes
 pub fn generate_canonical_inventory(endpoints: &[DiscoveredEndpoint]) -> Vec<CanonicalEndpoint> {
+    generate_canonical_inventory_with_wildcards(endpoints, &std::collections::HashSet::new())
+}
+
+/// Generate canonical endpoint inventory with wildcard prefix awareness
+pub fn generate_canonical_inventory_with_wildcards(
+    endpoints: &[DiscoveredEndpoint],
+    wildcard_prefixes: &std::collections::HashSet<String>,
+) -> Vec<CanonicalEndpoint> {
     // Filter to existence signals and non-junk
     let valid: Vec<_> = endpoints
         .iter()
@@ -1260,40 +1482,115 @@ pub fn generate_canonical_inventory(endpoints: &[DiscoveredEndpoint]) -> Vec<Can
         .filter(|e| !is_framework_junk(&e.url))
         .collect();
 
-    // Group by templated path pattern
+    // Group by templated path pattern, also tracking original URLs for param extraction
     let mut by_pattern: HashMap<String, Vec<&DiscoveredEndpoint>> = HashMap::new();
-    for ep in valid {
+    for ep in &valid {
         let pattern = templatize_path(&ep.url);
-        by_pattern.entry(pattern).or_default().push(ep);
+        let normalized = normalize_path(&pattern);
+        by_pattern.entry(normalized).or_default().push(ep);
     }
 
-    // Merge each pattern group into a canonical endpoint
-    let mut result: Vec<CanonicalEndpoint> = by_pattern
-        .into_iter()
-        .map(|(pattern, eps)| {
-            // Collect all unique status codes
-            let mut status_seen: Vec<u16> = eps.iter().map(|e| e.status_code).collect();
-            status_seen.sort();
-            status_seen.dedup();
+    // Identify which patterns are under wildcard prefixes
+    // A "fixed child" under a wildcard prefix should be suppressed
+    // Only templated paths ({id}, {uuid}) should remain
+    let mut result: Vec<CanonicalEndpoint> = Vec::new();
 
-            // Determine primary status (highest priority)
-            let primary_status = status_seen
-                .iter()
-                .max_by_key(|&&s| status_priority(s))
-                .copied()
-                .unwrap_or(200);
+    for (pattern, eps) in by_pattern.into_iter() {
+        // Skip non-API paths
+        if !is_canonical_api_path(&pattern) {
+            continue;
+        }
 
-            let annotation = get_status_annotation(primary_status);
+        // Skip redirect-only entries
+        if eps
+            .iter()
+            .all(|e| matches!(e.status_code, 301 | 302 | 307 | 308))
+        {
+            continue;
+        }
 
-            CanonicalEndpoint {
-                path: pattern,
-                annotation,
-                methods: None, // Will be populated by OPTIONS discovery if enabled
-                status_seen,
-                primary_status,
+        let variant_count = eps.len();
+
+        // Check if this pattern is a fixed child under a wildcard prefix
+        let mut is_fixed_under_wildcard = false;
+
+        for prefix in wildcard_prefixes {
+            // Check if pattern starts with this wildcard prefix
+            if pattern.starts_with(prefix) && pattern.len() > prefix.len() {
+                let suffix = &pattern[prefix.len()..];
+                // Get the first segment after the prefix
+                let first_seg = suffix.trim_start_matches('/').split('/').next().unwrap_or("");
+
+                // If it's a fixed segment (not {id}, {uuid}, etc.), it's a fixed child
+                if is_fixed_child(first_seg) && !first_seg.is_empty() {
+                    is_fixed_under_wildcard = true;
+                    break;
+                }
             }
-        })
-        .collect();
+        }
+
+        // Skip fixed children under wildcard prefixes (e.g., /api/products/all, /api/products/search)
+        if is_fixed_under_wildcard {
+            continue;
+        }
+
+        // Check if this is a templated path under a wildcard prefix (catch-all param route)
+        let is_catch_all = wildcard_prefixes.iter().any(|prefix| {
+            if pattern.starts_with(prefix) && pattern.len() > prefix.len() {
+                let suffix = &pattern[prefix.len()..];
+                let first_seg = suffix.trim_start_matches('/').split('/').next().unwrap_or("");
+                // It's a catch-all if the first segment is a template like {id}
+                first_seg.starts_with('{') && first_seg.ends_with('}')
+            } else {
+                false
+            }
+        });
+
+        // Extract observed parameter values for templated paths
+        let mut observed_param_values: Vec<String> = Vec::new();
+        if pattern.contains("/{") {
+            for ep in &eps {
+                if let Some(last_seg) = extract_last_segment(&ep.url) {
+                    // Don't include template placeholders or known resource names
+                    if !last_seg.starts_with('{')
+                        && !KNOWN_RESOURCE_NAMES.contains(&last_seg.to_lowercase().as_str())
+                    {
+                        observed_param_values.push(last_seg);
+                    }
+                }
+            }
+            observed_param_values.sort();
+            observed_param_values.dedup();
+        }
+
+        // Collect all unique status codes
+        let mut status_seen: Vec<u16> = eps.iter().map(|e| e.status_code).collect();
+        status_seen.sort();
+        status_seen.dedup();
+
+        // Determine primary status (highest priority)
+        let primary_status = status_seen
+            .iter()
+            .max_by_key(|&&s| status_priority(s))
+            .copied()
+            .unwrap_or(200);
+
+        let annotation = get_status_annotation(primary_status);
+
+        result.push(CanonicalEndpoint {
+            path: pattern,
+            annotation,
+            confirmed_methods: None,
+            allow_hint: None,
+            auth_required_methods: None,
+            status_seen,
+            primary_status,
+            variant_count,
+            is_wildcard: false,
+            is_catch_all_param: is_catch_all,
+            observed_param_values,
+        });
+    }
 
     // Sort by path
     result.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1583,6 +1880,8 @@ mod tests {
         assert!(inventory[0].status_seen.contains(&405));
         // No annotation for 200
         assert!(inventory[0].annotation.is_none());
+        // Variant count should be 2
+        assert_eq!(inventory[0].variant_count, 2);
     }
 
     #[test]

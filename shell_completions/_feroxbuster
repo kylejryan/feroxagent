@@ -101,6 +101,7 @@ _feroxbuster() {
 '--extract-links[Extract links from response body (html, javascript, etc...); make new requests based on findings (default\: true)]' \
 '--dont-extract-links[Don'\''t extract links from response body (html, javascript, etc...)]' \
 '--wordlist-only[Output generated wordlist to stdout without scanning]' \
+'--discover-methods[Run OPTIONS requests on 405 endpoints to discover allowed methods]' \
 '(--auto-bail)--auto-tune[Automatically lower scan rate when an excessive amount of errors are encountered]' \
 '--auto-bail[Automatically stop scanning when an excessive amount of errors are encountered]' \
 '-D[Don'\''t auto-filter wildcard responses]' \

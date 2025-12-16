@@ -104,6 +104,7 @@ set edit:completion:arg-completer[feroxbuster] = {|@words|
             cand --extract-links 'Extract links from response body (html, javascript, etc...); make new requests based on findings (default: true)'
             cand --dont-extract-links 'Don''t extract links from response body (html, javascript, etc...)'
             cand --wordlist-only 'Output generated wordlist to stdout without scanning'
+            cand --discover-methods 'Run OPTIONS requests on 405 endpoints to discover allowed methods'
             cand --auto-tune 'Automatically lower scan rate when an excessive amount of errors are encountered'
             cand --auto-bail 'Automatically stop scanning when an excessive amount of errors are encountered'
             cand -D 'Don''t auto-filter wildcard responses'

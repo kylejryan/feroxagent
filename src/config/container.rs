@@ -101,6 +101,10 @@ pub struct Configuration {
     #[serde(default)]
     pub wordlist_only: bool,
 
+    /// Whether to run OPTIONS discovery on 405 endpoints
+    #[serde(default)]
+    pub discover_methods: bool,
+
     /// Anthropic API key for LLM wordlist generation
     #[serde(default)]
     pub anthropic_key: String,
@@ -480,6 +484,7 @@ impl Default for Configuration {
             threads: threads(),
             recon_file: String::new(),
             wordlist_only: false,
+            discover_methods: false,
             anthropic_key: std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
             generated_wordlist: Vec::new(),
             dont_collect: ignored_extensions(),
@@ -1096,6 +1101,10 @@ impl Configuration {
             config.wordlist_only = true;
         }
 
+        if came_from_cli!(args, "discover_methods") {
+            config.discover_methods = true;
+        }
+
         if came_from_cli!(args, "unique") {
             config.unique = true;
         }
@@ -1443,6 +1452,7 @@ impl Configuration {
         update_if_not_default!(&mut conf.depth, new.depth, depth());
         update_if_not_default!(&mut conf.recon_file, new.recon_file, "");
         update_if_not_default!(&mut conf.wordlist_only, new.wordlist_only, false);
+        update_if_not_default!(&mut conf.discover_methods, new.discover_methods, false);
         update_if_not_default!(&mut conf.status_codes, new.status_codes, status_codes());
         // status_codes() is the default for replay_codes, if they're not provided
         update_if_not_default!(&mut conf.replay_codes, new.replay_codes, status_codes());
