@@ -687,9 +687,8 @@ pub fn initialize() -> Command {
             Arg::new("json")
                 .long("json")
                 .num_args(0)
-                .requires("output_files")
                 .help_heading("Output settings")
-                .help("Emit JSON logs to --output and --debug-log instead of normal text")
+                .help("Output structured JSON to stdout (canonical endpoints + token usage)")
         ).arg(
             Arg::new("output")
                 .short('o')

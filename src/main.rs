@@ -189,7 +189,9 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
     });
 
     // Generate smart wordlist and attack report using LLM
-    eprintln!("[*] Generating smart wordlist and attack surface report...");
+    if !config.json {
+        eprintln!("[*] Generating smart wordlist and attack surface report...");
+    }
 
     let generator_config = GeneratorConfig {
         target_url: config.target_url.clone(),
@@ -218,10 +220,15 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
     pentest_report.set_attack_surface(result.attack_report.clone());
     pentest_report.stats.total_paths_tested = result.wordlist.len();
 
-    eprintln!(
-        "\n[+] Generated {} paths for scanning",
-        result.wordlist.len()
-    );
+    // Store token usage for JSON output
+    let token_usage = result.token_usage.clone();
+
+    if !config.json {
+        eprintln!(
+            "\n[+] Generated {} paths for scanning",
+            result.wordlist.len()
+        );
+    }
 
     // Handle --wordlist-only mode
     if config.wordlist_only {
@@ -710,7 +717,19 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
     pentest_report.set_canonical_endpoints(filtered_endpoints);
 
     // Output the comprehensive report
-    eprintln!("{}", pentest_report.generate_output());
+    if config.json {
+        // JSON output to stdout
+        let json_output = pentest_report.to_json_output(&token_usage);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json_output).unwrap_or_else(|e| {
+                format!("{{\"error\": \"Failed to serialize JSON: {}\"}}", e)
+            })
+        );
+    } else {
+        // Pretty-printed text output to stderr
+        eprintln!("{}", pentest_report.generate_output());
+    }
 
     log::trace!("exit: wrapped_main");
     Ok(())

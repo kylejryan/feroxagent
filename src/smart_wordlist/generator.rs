@@ -3,7 +3,7 @@
 //! Coordinates the analysis, probing, and LLM-based wordlist generation.
 
 use super::analyzer::{analyze_urls, TechAnalysis};
-use super::llm::ClaudeClient;
+use super::llm::{AggregatedUsage, ClaudeClient};
 use super::mutations::{expand_parameterized_paths, generate_mutations, MutationConfig};
 use super::probe::{probe_urls, summarize_probe_results};
 use anyhow::{Context, Result};
@@ -24,6 +24,7 @@ pub struct GenerationResult {
     pub attack_report: String,
     pub recon_urls: Vec<String>,
     pub technologies: Vec<String>,
+    pub token_usage: AggregatedUsage,
 }
 
 /// Configuration for wordlist budgeting to enforce diversity
@@ -86,19 +87,30 @@ pub async fn generate_wordlist(
     log::info!("Generating wordlist and attack surface report using Claude API...");
     let claude = ClaudeClient::new(config.anthropic_key)?;
 
+    // Track aggregated token usage
+    let mut token_usage = AggregatedUsage::default();
+
     // Generate attack surface report
-    let attack_report = claude
+    let (attack_report, report_usage) = claude
         .generate_attack_report(&full_summary, &config.target_url, &analysis, &probe_results)
         .await
         .context("Failed to generate attack surface report")?;
+    token_usage.add(&report_usage);
 
     // Generate wordlist
-    let llm_wordlist = claude
+    let (llm_wordlist, wordlist_usage) = claude
         .generate_wordlist(&full_summary, &config.target_url)
         .await
         .context("Failed to generate wordlist from LLM")?;
+    token_usage.add(&wordlist_usage);
 
     log::info!("LLM generated {} paths", llm_wordlist.len());
+    log::info!(
+        "Token usage: {} input, {} output, {} cached",
+        token_usage.input_tokens,
+        token_usage.output_tokens,
+        token_usage.cache_read_input_tokens
+    );
 
     // Combine LLM wordlist with extracted paths
     let combined_wordlist = combine_wordlists(&analysis, llm_wordlist);
@@ -138,6 +150,7 @@ pub async fn generate_wordlist(
         attack_report,
         recon_urls,
         technologies,
+        token_usage,
     })
 }
 

@@ -36,11 +36,46 @@ struct Message {
 #[derive(Debug, Deserialize)]
 struct ClaudeResponse {
     content: Vec<ContentBlock>,
+    usage: Option<UsageMetrics>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ContentBlock {
     text: String,
+}
+
+/// Token usage metrics from a single Claude API call
+#[derive(Debug, Deserialize, Clone, Default, Serialize)]
+pub struct UsageMetrics {
+    #[serde(default)]
+    pub input_tokens: u32,
+    #[serde(default)]
+    pub output_tokens: u32,
+    #[serde(default)]
+    pub cache_read_input_tokens: u32,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u32,
+}
+
+/// Aggregated token usage across multiple API calls
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AggregatedUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_read_input_tokens: u32,
+    pub cache_creation_input_tokens: u32,
+    pub total_tokens: u32,
+}
+
+impl AggregatedUsage {
+    /// Add usage from an API call to the aggregate
+    pub fn add(&mut self, usage: &UsageMetrics) {
+        self.input_tokens += usage.input_tokens;
+        self.output_tokens += usage.output_tokens;
+        self.cache_read_input_tokens += usage.cache_read_input_tokens;
+        self.cache_creation_input_tokens += usage.cache_creation_input_tokens;
+        self.total_tokens = self.input_tokens + self.output_tokens;
+    }
 }
 
 impl ClaudeClient {
@@ -61,11 +96,12 @@ impl ClaudeClient {
     }
 
     /// Generate a wordlist based on technology analysis
+    /// Returns the wordlist and token usage metrics
     pub async fn generate_wordlist(
         &self,
         analysis_summary: &str,
         target_url: &str,
-    ) -> Result<Vec<String>> {
+    ) -> Result<(Vec<String>, UsageMetrics)> {
         let system_prompt = self.build_system_prompt();
         let user_prompt = self.build_user_prompt(analysis_summary, target_url);
 
@@ -110,17 +146,21 @@ impl ClaudeClient {
         // Parse the wordlist from the response
         let wordlist = self.parse_wordlist_response(&text);
 
-        Ok(wordlist)
+        // Extract usage metrics
+        let usage = claude_response.usage.unwrap_or_default();
+
+        Ok((wordlist, usage))
     }
 
     /// Generate an attack surface report based on analysis and probe results
+    /// Returns the report and token usage metrics
     pub async fn generate_attack_report(
         &self,
         analysis_summary: &str,
         target_url: &str,
         analysis: &TechAnalysis,
         probe_results: &[ProbeResult],
-    ) -> Result<String> {
+    ) -> Result<(String, UsageMetrics)> {
         let system_prompt = self.build_attack_report_system_prompt();
         let user_prompt = self.build_attack_report_user_prompt(
             analysis_summary,
@@ -167,7 +207,10 @@ impl ClaudeClient {
             .map(|c| c.text.clone())
             .unwrap_or_default();
 
-        Ok(report)
+        // Extract usage metrics
+        let usage = claude_response.usage.unwrap_or_default();
+
+        Ok((report, usage))
     }
 
     fn build_attack_report_system_prompt(&self) -> String {

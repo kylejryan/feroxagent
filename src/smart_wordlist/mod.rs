@@ -21,7 +21,7 @@ pub use generator::{
     budget_wordlist, generate_wordlist, output_attack_report, output_wordlist, BudgetConfig,
     GenerationResult, GeneratorConfig,
 };
-pub use llm::ClaudeClient;
+pub use llm::{AggregatedUsage, ClaudeClient, UsageMetrics};
 pub use mutations::{expand_parameterized_paths, generate_mutations, Framework, MutationConfig};
 pub use probe::{
     confirm_methods, confirm_methods_batch, discover_methods, discover_methods_for_405s,
@@ -32,5 +32,5 @@ pub use probe::{
 pub use report::{
     detect_parameterized_endpoint, generate_canonical_inventory,
     generate_canonical_inventory_with_wildcards, output_report, CanonicalEndpoint,
-    DiscoveredEndpoint, PentestReport, ReportStats,
+    DiscoveredEndpoint, JsonOutput, PentestReport, ReportStats,
 };

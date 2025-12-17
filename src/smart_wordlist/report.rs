@@ -6,6 +6,7 @@
 //! Uses a signal-based scoring system to filter noise and surface
 //! only high-value findings worth investigating.
 
+use super::llm::AggregatedUsage;
 use console::style;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -67,6 +68,47 @@ pub struct ReportStats {
     pub status_code_breakdown: HashMap<u16, usize>,
 }
 
+/// JSON output structure for --json flag
+#[derive(Debug, Serialize)]
+pub struct JsonOutput {
+    pub target: String,
+    pub canonical_endpoints: Vec<CanonicalEndpointJson>,
+    pub token_usage: JsonTokenUsage,
+    pub stats: JsonStats,
+}
+
+/// Canonical endpoint in JSON output format
+#[derive(Debug, Serialize)]
+pub struct CanonicalEndpointJson {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub methods: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_required_methods: Option<Vec<String>>,
+    pub status: u16,
+    pub is_catch_all: bool,
+    pub variant_count: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub observed_variants: Vec<String>,
+}
+
+/// Token usage in JSON output format
+#[derive(Debug, Serialize)]
+pub struct JsonTokenUsage {
+    pub input_tokens: u32,
+    pub output_tokens: u32,
+    pub cache_read_input_tokens: u32,
+    pub cache_creation_input_tokens: u32,
+    pub total_tokens: u32,
+}
+
+/// Stats in JSON output format
+#[derive(Debug, Serialize)]
+pub struct JsonStats {
+    pub total_paths_tested: usize,
+    pub total_filtered_noise: usize,
+}
+
 impl PentestReport {
     /// Create a new report
     pub fn new(target: String) -> Self {
@@ -101,6 +143,39 @@ impl PentestReport {
     /// Set canonical endpoint inventory
     pub fn set_canonical_endpoints(&mut self, endpoints: Vec<CanonicalEndpoint>) {
         self.canonical_endpoints = endpoints;
+    }
+
+    /// Convert report to JSON output format
+    pub fn to_json_output(&self, token_usage: &AggregatedUsage) -> JsonOutput {
+        let canonical_endpoints: Vec<CanonicalEndpointJson> = self
+            .canonical_endpoints
+            .iter()
+            .map(|e| CanonicalEndpointJson {
+                path: e.path.clone(),
+                methods: e.confirmed_methods.clone(),
+                auth_required_methods: e.auth_required_methods.clone(),
+                status: e.primary_status,
+                is_catch_all: e.is_catch_all_param,
+                variant_count: e.variant_count,
+                observed_variants: e.observed_param_values.clone(),
+            })
+            .collect();
+
+        JsonOutput {
+            target: self.target.clone(),
+            canonical_endpoints,
+            token_usage: JsonTokenUsage {
+                input_tokens: token_usage.input_tokens,
+                output_tokens: token_usage.output_tokens,
+                cache_read_input_tokens: token_usage.cache_read_input_tokens,
+                cache_creation_input_tokens: token_usage.cache_creation_input_tokens,
+                total_tokens: token_usage.total_tokens,
+            },
+            stats: JsonStats {
+                total_paths_tested: self.stats.total_paths_tested,
+                total_filtered_noise: self.stats.total_filtered_noise,
+            },
+        }
     }
 
     /// Add a discovered endpoint
