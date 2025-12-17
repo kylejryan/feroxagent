@@ -14,18 +14,10 @@ keywords = [
     "web",
     "llm",
 ]
-exclude = [".github/*", "img/*", "check-coverage.sh"]
-build = "build.rs"
+exclude = [".github/*", "check-coverage.sh"]
 
 [badges]
 maintenance = { status = "actively-developed" }
-
-[build-dependencies]
-clap = { version = "4.5", features = ["wrap_help", "cargo"] }
-clap_complete = "4.5"
-regex = "1.11"
-lazy_static = "1.5"
-dirs = "5.0"
 
 [dependencies]
 scraper = "0.19"
@@ -66,20 +58,3 @@ predicates = "3.1"
 lto = true
 codegen-units = 1
 panic = 'abort'
-
-[package.metadata.deb]
-section = "utility"
-license-file = ["LICENSE", "4"]
-conf-files = ["/etc/feroxagent/ferox-config.toml"]
-assets = [
-    [
-        "target/release/feroxagent",
-        "/usr/bin/",
-        "755",
-    ],
-    [
-        "ferox-config.toml.example",
-        "/etc/feroxagent/ferox-config.toml",
-        "644",
-    ],
-]
