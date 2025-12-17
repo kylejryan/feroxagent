@@ -1087,6 +1087,9 @@ impl Configuration {
 
         if came_from_cli!(args, "json") {
             config.json = true;
+            // JSON mode implies silent - suppress all output until final JSON
+            config.silent = true;
+            config.output_level = OutputLevel::Silent;
         }
 
         if came_from_cli!(args, "force_recursion") {

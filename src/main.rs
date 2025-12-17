@@ -718,12 +718,12 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
 
     // Output the comprehensive report
     if config.json {
-        // JSON output to stdout
+        // JSON output to stdout only
         let json_output = pentest_report.to_json_output(&token_usage);
         println!(
             "{}",
             serde_json::to_string_pretty(&json_output).unwrap_or_else(|e| {
-                format!("{{\"error\": \"Failed to serialize JSON: {}\"}}", e)
+                format!(r#"{{"error": "Failed to serialize JSON: {}"}}"#, e)
             })
         );
     } else {
@@ -792,7 +792,12 @@ fn main() -> Result<()> {
     {
         let future = wrapped_main(config.clone());
         if let Err(e) = runtime.block_on(future) {
-            eprintln!("{e}");
+            if config.json {
+                // In JSON mode, output errors as JSON to stdout
+                println!(r#"{{"error": "{}"}}"#, e.to_string().replace('"', "\\\""));
+            } else {
+                eprintln!("{e}");
+            }
             // spin-down the progress bar on error
             PROGRESS_PRINTER.finish();
         };
