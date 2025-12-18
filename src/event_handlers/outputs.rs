@@ -264,8 +264,10 @@ impl TermOutHandler {
             let should_process_response = contains_sentry && unknown_sentry;
 
             if should_process_response {
-                // print to stdout
-                ferox_print(&resp.as_str(), &PROGRESS_PRINTER);
+                // print to stdout (skip in silent mode - our --json outputs summary at end)
+                if !self.config.silent {
+                    ferox_print(&resp.as_str(), &PROGRESS_PRINTER);
+                }
 
                 send_command!(tx_stats, AddToUsizeField(ResourcesDiscovered, 1));
 

@@ -984,11 +984,9 @@ impl Configuration {
             // if the line below is outside of the if, we'd overwrite true with
             // false if no --silent is used on the command line
             config.silent = true;
-            config.output_level = if config.json {
-                OutputLevel::SilentJSON
-            } else {
-                OutputLevel::Silent
-            };
+            // Note: We always use Silent here, not SilentJSON. Our --json flag outputs
+            // a single summary JSON at the end, not per-response JSON streaming.
+            config.output_level = OutputLevel::Silent;
         }
 
         if came_from_cli!(args, "auto_tune")
