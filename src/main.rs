@@ -206,12 +206,7 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
     let generation_result =
         smart_wordlist::generate_wordlist(generator_config, &config.client).await;
 
-    let result = match generation_result {
-        Ok(r) => r,
-        Err(e) => {
-            bail!("Failed to generate wordlist: {}", e);
-        }
-    };
+    let result = generation_result.context("Failed to generate wordlist")?;
 
     // Initialize the pentest report
     let mut pentest_report = PentestReport::new(config.target_url.clone());
@@ -794,7 +789,25 @@ fn main() -> Result<()> {
         if let Err(e) = runtime.block_on(future) {
             if config.json {
                 // In JSON mode, output errors as JSON to stdout
-                println!(r#"{{"error": "{}"}}"#, e.to_string().replace('"', "\\\""));
+                if config.verbosity > 0 {
+                    // Verbose: include full error chain
+                    let error_chain: Vec<String> =
+                        e.chain().map(|cause| cause.to_string()).collect();
+                    let chain_json = serde_json::to_string(&error_chain).unwrap_or_default();
+                    println!(
+                        r#"{{"error": "{}", "error_chain": {}}}"#,
+                        e.to_string().replace('"', "\\\""),
+                        chain_json
+                    );
+                } else {
+                    println!(r#"{{"error": "{}"}}"#, e.to_string().replace('"', "\\\""));
+                }
+            } else if config.verbosity > 0 {
+                // Verbose: print full error chain with causes
+                eprintln!("Error: {e}");
+                for (i, cause) in e.chain().skip(1).enumerate() {
+                    eprintln!("  Caused by ({i}): {cause}");
+                }
             } else {
                 eprintln!("{e}");
             }
