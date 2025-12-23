@@ -27,13 +27,15 @@ use feroxagent::{
         FiltersHandler, Handles, ScanHandler, StatsHandler, Tasks, TermInputHandler,
         TermOutHandler, SCAN_COMPLETE,
     },
-    filters, heuristics, logger,
+    filters::{self, TrapDetector},
+    heuristics, logger,
     progress::PROGRESS_PRINTER,
     scan_manager::{self, ScanType},
     scanner::{self, RESPONSES},
     smart_wordlist::{
-        self, confirm_methods_batch, detect_parameterized_endpoint, discover_methods_for_405s,
-        fingerprint_api_prefixes, generate_canonical_inventory_with_wildcards, output_wordlist,
+        self, analyze_traps, confirm_methods_batch, detect_parameterized_endpoint,
+        discover_methods_for_405s, fingerprint_api_prefixes,
+        generate_canonical_inventory_with_wildcards, output_wordlist, ClaudeClient,
         DiscoveredEndpoint, GeneratorConfig, PentestReport,
     },
     utils::{fmt_err, slugify_filename},
@@ -216,7 +218,7 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
     pentest_report.stats.total_paths_tested = result.wordlist.len();
 
     // Store token usage for JSON output
-    let token_usage = result.token_usage.clone();
+    let mut token_usage = result.token_usage.clone();
 
     if !config.json {
         eprintln!(
@@ -258,6 +260,12 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
     let (out_task, out_handle) =
         TermOutHandler::initialize(config.clone(), stats_handle.tx.clone());
 
+    // Create trap detector based on configuration
+    let trap_detector = Arc::new(TrapDetector::new(
+        config.trap_threshold,
+        !config.no_trap_detection,
+    ));
+
     // bundle up all the disparate handles and JoinHandles (tasks)
     let handles = Arc::new(Handles::new(
         stats_handle,
@@ -265,6 +273,7 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
         out_handle,
         config.clone(),
         words,
+        trap_detector,
     ));
 
     let (scan_task, scan_handle) = ScanHandler::initialize(handles.clone());
@@ -522,7 +531,53 @@ async fn wrapped_main(config: Arc<Configuration>) -> Result<()> {
         }
     }
 
+    // Clone trap_detector and config values before clean_up consumes handles
+    let trap_detector = handles.trap_detector.clone();
+    let analyze_traps_enabled = handles.config.analyze_traps;
+    let anthropic_key = handles.config.anthropic_key.clone();
+    let target_url = handles.config.target_url.clone();
+    let json_mode = handles.config.json;
+
     clean_up(handles, tasks).await?;
+
+    // Run post-scan LLM trap analysis if enabled
+    if analyze_traps_enabled && !anthropic_key.is_empty() {
+        let stats = trap_detector.stats();
+        if stats.filtered > 0 || stats.trap_prefixes > 0 {
+            if !json_mode {
+                eprintln!("\n[+] Running post-scan trap analysis...");
+            }
+
+            match ClaudeClient::new(anthropic_key) {
+                Ok(client) => {
+                    match analyze_traps(&client, &trap_detector, &target_url).await {
+                        Ok(result) => {
+                            if !json_mode {
+                                eprintln!("\n=== Trap Analysis Results ===");
+                                eprintln!(
+                                    "Trap prefixes: {}, Trap hashes: {}, Filtered: {}",
+                                    result.trap_prefix_count,
+                                    result.trap_hash_count,
+                                    result.filtered_count
+                                );
+                                eprintln!("\n{}", result.analysis);
+                            }
+                            // Add to token usage tracking
+                            token_usage.add(&result.usage);
+                        }
+                        Err(e) => {
+                            log::warn!("Trap analysis failed: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Could not create Claude client for trap analysis: {}", e);
+                }
+            }
+        } else if !json_mode {
+            eprintln!("\n[+] No traps detected, skipping trap analysis");
+        }
+    }
 
     // Generate comprehensive pentest report from scan results
     if let Ok(responses) = RESPONSES.responses.read() {

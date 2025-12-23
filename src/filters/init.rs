@@ -1,6 +1,6 @@
 use super::{
-    utils::create_similarity_filter, LinesFilter, RegexFilter, SizeFilter, StatusCodeFilter,
-    WordsFilter,
+    utils::create_similarity_filter, JsonErrorFilter, LinesFilter, RedirectFilter, RegexFilter,
+    SizeFilter, StatusCodeFilter, WordsFilter,
 };
 use crate::{event_handlers::Handles, skip_fail, utils::fmt_err, Command::AddFilter};
 use anyhow::Result;
@@ -64,6 +64,24 @@ pub async fn initialize(handles: Arc<Handles>) -> Result<()> {
 
         let boxed_filter = Box::new(filter);
         skip_fail!(handles.filters.send(AddFilter(boxed_filter)));
+    }
+
+    // add JSON soft-404 filter (enabled by default, disabled via --no-json-soft-404)
+    if !handles.config.no_json_soft_404 {
+        let filter = JsonErrorFilter::new(true);
+        let boxed_filter = Box::new(filter);
+        if let Err(e) = handles.filters.send(AddFilter(boxed_filter)) {
+            log::warn!("Could not add JSON error filter: {}", e);
+        }
+    }
+
+    // add HTML redirect filter (enabled by default, disabled via --no-redirect-filter)
+    if !handles.config.no_redirect_filter {
+        let filter = RedirectFilter::new(true);
+        let boxed_filter = Box::new(filter);
+        if let Err(e) = handles.filters.send(AddFilter(boxed_filter)) {
+            log::warn!("Could not add redirect filter: {}", e);
+        }
     }
 
     handles.filters.sync().await?;

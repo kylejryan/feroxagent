@@ -2,7 +2,7 @@ use super::utils::{
     backup_extensions, depth, determine_requester_policy, dont_filter_default, extract_links,
     ignored_extensions, methods, parse_request_file, report_and_exit, request_protocol,
     response_size_limit, save_state, serialized_type, split_header, split_query, status_codes,
-    threads, timeout, user_agent, OutputLevel, RequesterPolicy,
+    threads, timeout, trap_threshold, user_agent, OutputLevel, RequesterPolicy,
 };
 
 use crate::config::determine_output_level;
@@ -104,6 +104,10 @@ pub struct Configuration {
     /// Whether to run OPTIONS discovery on 405 endpoints
     #[serde(default)]
     pub discover_methods: bool,
+
+    /// Whether to run post-scan LLM trap analysis
+    #[serde(default)]
+    pub analyze_traps: bool,
 
     /// Anthropic API key for LLM wordlist generation
     #[serde(default)]
@@ -385,6 +389,22 @@ pub struct Configuration {
     /// Maximum size of response to read in bytes (default: 4MB to prevent OOM)
     #[serde(default = "response_size_limit")]
     pub response_size_limit: usize,
+
+    /// Disable trap detection (enabled by default)
+    #[serde(default)]
+    pub no_trap_detection: bool,
+
+    /// Threshold for trap detection (default: 10)
+    #[serde(default = "trap_threshold")]
+    pub trap_threshold: usize,
+
+    /// Disable JSON soft-404 detection (enabled by default)
+    #[serde(default)]
+    pub no_json_soft_404: bool,
+
+    /// Disable client-side redirect detection (enabled by default)
+    #[serde(default)]
+    pub no_redirect_filter: bool,
 }
 
 impl Default for Configuration {
@@ -485,12 +505,17 @@ impl Default for Configuration {
             recon_file: String::new(),
             wordlist_only: false,
             discover_methods: false,
+            analyze_traps: false,
             anthropic_key: std::env::var("ANTHROPIC_API_KEY").unwrap_or_default(),
             generated_wordlist: Vec::new(),
             dont_collect: ignored_extensions(),
             backup_extensions: backup_extensions(),
             unique: false,
             response_size_limit: response_size_limit(),
+            no_trap_detection: false,
+            trap_threshold: trap_threshold(),
+            no_json_soft_404: false,
+            no_redirect_filter: false,
         }
     }
 }
@@ -1106,8 +1131,31 @@ impl Configuration {
             config.discover_methods = true;
         }
 
+        if came_from_cli!(args, "analyze_traps") {
+            config.analyze_traps = true;
+        }
+
         if came_from_cli!(args, "unique") {
             config.unique = true;
+        }
+
+        if came_from_cli!(args, "no_trap_detection") {
+            config.no_trap_detection = true;
+        }
+
+        update_config_with_num_type_if_present!(
+            &mut config.trap_threshold,
+            args,
+            "trap_threshold",
+            usize
+        );
+
+        if came_from_cli!(args, "no_json_soft_404") {
+            config.no_json_soft_404 = true;
+        }
+
+        if came_from_cli!(args, "no_redirect_filter") {
+            config.no_redirect_filter = true;
         }
 
         ////
@@ -1440,6 +1488,14 @@ impl Configuration {
             new.response_size_limit,
             response_size_limit()
         );
+        update_if_not_default!(&mut conf.no_trap_detection, new.no_trap_detection, false);
+        update_if_not_default!(
+            &mut conf.trap_threshold,
+            new.trap_threshold,
+            trap_threshold()
+        );
+        update_if_not_default!(&mut conf.no_json_soft_404, new.no_json_soft_404, false);
+        update_if_not_default!(&mut conf.no_redirect_filter, new.no_redirect_filter, false);
 
         update_if_not_default!(&mut conf.timeout, new.timeout, timeout());
         update_if_not_default!(&mut conf.user_agent, new.user_agent, user_agent());
@@ -1454,6 +1510,7 @@ impl Configuration {
         update_if_not_default!(&mut conf.recon_file, new.recon_file, "");
         update_if_not_default!(&mut conf.wordlist_only, new.wordlist_only, false);
         update_if_not_default!(&mut conf.discover_methods, new.discover_methods, false);
+        update_if_not_default!(&mut conf.analyze_traps, new.analyze_traps, false);
         update_if_not_default!(&mut conf.status_codes, new.status_codes, status_codes());
         // status_codes() is the default for replay_codes, if they're not provided
         update_if_not_default!(&mut conf.replay_codes, new.replay_codes, status_codes());

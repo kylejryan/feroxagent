@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::Configuration;
 use crate::event_handlers::scans::ScanHandle;
+use crate::filters::TrapDetector;
 use crate::scan_manager::FeroxScans;
 use crate::Joiner;
 #[cfg(test)]
@@ -60,6 +61,9 @@ pub struct Handles {
 
     /// Pointer to the list of words generated from reading in the wordlist
     pub wordlist: Arc<Vec<String>>,
+
+    /// Trap detector for catch-all/honeypot detection
+    pub trap_detector: Arc<TrapDetector>,
 }
 
 /// implementation of Handles
@@ -71,6 +75,7 @@ impl Handles {
         output: TermOutHandle,
         config: Arc<Configuration>,
         wordlist: Arc<Vec<String>>,
+        trap_detector: Arc<TrapDetector>,
     ) -> Self {
         Self {
             stats,
@@ -79,6 +84,7 @@ impl Handles {
             config,
             scans: RwLock::new(None),
             wordlist,
+            trap_detector,
         }
     }
 
@@ -94,12 +100,17 @@ impl Handles {
         let stats_handle = StatsHandle::new(Arc::new(Stats::new(configuration.json)), tx.clone());
         let filters_handle = FiltersHandle::new(Arc::new(FeroxFilters::default()), tx.clone());
         let wordlist = Arc::new(vec![String::from("this_is_a_test")]);
+        let trap_detector = Arc::new(TrapDetector::new(
+            configuration.trap_threshold,
+            !configuration.no_trap_detection,
+        ));
         let handles = Self::new(
             stats_handle,
             filters_handle,
             terminal_handle,
             configuration,
             wordlist,
+            trap_detector,
         );
         if let Some(sh) = scanned_urls {
             let scan_handle = ScanHandle::new(sh, tx);

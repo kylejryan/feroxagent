@@ -15,6 +15,7 @@ mod llm;
 mod mutations;
 mod probe;
 mod report;
+mod trap_analysis;
 
 pub use analyzer::TechAnalysis;
 pub use generator::{
@@ -34,3 +35,4 @@ pub use report::{
     generate_canonical_inventory_with_wildcards, output_report, CanonicalEndpoint,
     DiscoveredEndpoint, JsonOutput, PentestReport, ReportStats,
 };
+pub use trap_analysis::{analyze_traps, TrapAnalysisResult};

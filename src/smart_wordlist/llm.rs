@@ -9,39 +9,39 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-const CLAUDE_API_URL: &str = "https://api.anthropic.com/v1/messages";
-const CLAUDE_MODEL: &str = "claude-sonnet-4-20250514";
-const ANTHROPIC_VERSION: &str = "2023-06-01";
+pub(crate) const CLAUDE_API_URL: &str = "https://api.anthropic.com/v1/messages";
+pub(crate) const CLAUDE_MODEL: &str = "claude-sonnet-4-20250514";
+pub(crate) const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// Claude API client
 pub struct ClaudeClient {
-    client: Client,
-    api_key: String,
+    pub(crate) client: Client,
+    pub(crate) api_key: String,
 }
 
 #[derive(Debug, Serialize)]
-struct ClaudeRequest {
-    model: String,
-    max_tokens: u32,
-    messages: Vec<Message>,
-    system: String,
+pub(crate) struct ClaudeRequest {
+    pub model: String,
+    pub max_tokens: u32,
+    pub messages: Vec<Message>,
+    pub system: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Message {
-    role: String,
-    content: String,
+pub(crate) struct Message {
+    pub role: String,
+    pub content: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ClaudeResponse {
-    content: Vec<ContentBlock>,
-    usage: Option<UsageMetrics>,
+pub(crate) struct ClaudeResponse {
+    pub content: Vec<ContentBlock>,
+    pub usage: Option<UsageMetrics>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ContentBlock {
-    text: String,
+pub(crate) struct ContentBlock {
+    pub text: String,
 }
 
 /// Token usage metrics from a single Claude API call

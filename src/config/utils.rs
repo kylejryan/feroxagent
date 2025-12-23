@@ -117,6 +117,11 @@ pub(super) fn response_size_limit() -> usize {
     4 * 1024 * 1024 // 4MB in bytes
 }
 
+/// default trap detection threshold
+pub(super) fn trap_threshold() -> usize {
+    crate::filters::DEFAULT_TRAP_THRESHOLD
+}
+
 /// enum representing the three possible states for informational output (not logging verbosity)
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OutputLevel {

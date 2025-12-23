@@ -409,6 +409,35 @@ pub fn initialize() -> Command {
                 .num_args(0)
                 .help_heading("Response filters")
                 .help("Only show unique responses")
+        )
+        .arg(
+            Arg::new("no_trap_detection")
+                .long("no-trap-detection")
+                .num_args(0)
+                .help_heading("Response filters")
+                .help("Disable trap/catch-all detection (enabled by default)")
+        )
+        .arg(
+            Arg::new("trap_threshold")
+                .long("trap-threshold")
+                .value_name("N")
+                .num_args(1)
+                .help_heading("Response filters")
+                .help("Number of identical responses before marking as trap (default: 10)")
+        )
+        .arg(
+            Arg::new("no_json_soft_404")
+                .long("no-json-soft-404")
+                .num_args(0)
+                .help_heading("Response filters")
+                .help("Disable JSON soft-404 detection (enabled by default)")
+        )
+        .arg(
+            Arg::new("no_redirect_filter")
+                .long("no-redirect-filter")
+                .num_args(0)
+                .help_heading("Response filters")
+                .help("Disable client-side redirect detection (enabled by default)")
         );
 
     /////////////////////////////////////////////////////////////////////
@@ -589,6 +618,13 @@ pub fn initialize() -> Command {
                 .num_args(0)
                 .help_heading("Smart wordlist settings")
                 .help("Run OPTIONS requests on 405 endpoints to discover allowed methods"),
+        )
+        .arg(
+            Arg::new("analyze_traps")
+                .long("analyze-traps")
+                .num_args(0)
+                .help_heading("Smart wordlist settings")
+                .help("Use LLM to analyze and identify trap responses after scan completes"),
         )
         .arg(
             Arg::new("auto_tune")

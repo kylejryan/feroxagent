@@ -147,6 +147,15 @@ pub(crate) async fn send_try_recursion_command(
     handles: Arc<Handles>,
     response: FeroxResponse,
 ) -> Result<()> {
+    // Block recursion into trap prefixes to prevent wasted scan jobs
+    if handles
+        .trap_detector
+        .is_trap_prefix(response.url().as_str())
+    {
+        log::debug!("blocking recursion into trap prefix: {}", response.url());
+        return Ok(());
+    }
+
     // make the response mutable so we can drop the body before
     // sending it over the mpsc
     let mut response = response;

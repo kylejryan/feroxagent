@@ -464,6 +464,14 @@ impl Requester {
                     continue;
                 }
 
+                // Check if this URL's prefix is a known trap (early termination)
+                // This prevents wasting requests on paths like /admin/assets/.aws/.env
+                // when we've already learned that /admin/ always returns the same response
+                if self.handles.trap_detector.is_trap_prefix(url.as_str()) {
+                    log::debug!("skipping trap prefix: {}", url);
+                    continue;
+                }
+
                 // check if rate limiting should be applied (either via --rate-limit or auto-tune)
                 // and a rate_limiter has been created
                 // short-circuiting the lock access behind the first boolean check
@@ -572,6 +580,13 @@ impl Requester {
                     .data
                     .should_filter_response(&ferox_response, self.handles.stats.tx.clone())
                 {
+                    continue;
+                }
+
+                // Record response fingerprint and check if it's a trap (duplicate/catch-all)
+                // This learns trap patterns and filters out responses that match known traps
+                if self.handles.trap_detector.record_and_check(&ferox_response) {
+                    log::debug!("filtered trap response: {}", ferox_response.url());
                     continue;
                 }
 
@@ -703,6 +718,10 @@ mod tests {
         let (out_task, out_handle) =
             TermOutHandler::initialize(configuration.clone(), stats_handle.tx.clone());
         let wordlist = Arc::new(vec![String::from("this_is_a_test")]);
+        let trap_detector = Arc::new(filters::TrapDetector::new(
+            configuration.trap_threshold,
+            !configuration.no_trap_detection,
+        ));
 
         let handles = Arc::new(Handles::new(
             stats_handle,
@@ -710,6 +729,7 @@ mod tests {
             out_handle,
             configuration.clone(),
             wordlist,
+            trap_detector,
         ));
 
         let (scan_task, scan_handle) = ScanHandler::initialize(handles.clone());
